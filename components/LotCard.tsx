@@ -8,13 +8,28 @@ interface LotCardProps {
   onReport: (lotId: string) => void;
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  crowd: 'Crowd',
+  cv: 'CV',
+  blended: 'Blended',
+};
+
 export function LotCard({ lot, onReport }: LotCardProps) {
   const statusColor = StatusColors[lot.status];
 
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Text style={styles.name}>{lot.name}</Text>
+        <View style={styles.nameRow}>
+          <Text style={styles.name}>{lot.name}</Text>
+          {lot.dataSource !== 'crowd' && (
+            <View style={styles.sourceBadge}>
+              <Text style={styles.sourceText}>
+                {SOURCE_LABELS[lot.dataSource] ?? lot.dataSource}
+              </Text>
+            </View>
+          )}
+        </View>
         <View style={[styles.badge, { backgroundColor: statusColor }]}>
           <Text style={styles.badgeText}>{StatusLabels[lot.status]}</Text>
         </View>
@@ -30,10 +45,20 @@ export function LotCard({ lot, onReport }: LotCardProps) {
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.meta}>
-          {lot.reportCount} report{lot.reportCount !== 1 ? 's' : ''} in last 90
-          min
-        </Text>
+        <View>
+          <Text style={styles.meta}>
+            {lot.reportCount} report{lot.reportCount !== 1 ? 's' : ''} in last
+            90 min
+          </Text>
+          {lot.cvOccupancy != null && (
+            <Text style={styles.cvMeta}>
+              CV: {lot.cvOccupancy.toFixed(0)}% occupied
+              {lot.cvConfidence != null &&
+                ` (${(lot.cvConfidence * 100).toFixed(0)}% conf)`}
+              {lot.cvSource ? ` — ${lot.cvSource}` : ''}
+            </Text>
+          )}
+        </View>
         <TouchableOpacity
           style={styles.reportBtn}
           onPress={() => onReport(lot.id)}
@@ -60,10 +85,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
   name: {
     fontSize: 18,
     fontWeight: '700',
     color: Colors.TEXT_PRIMARY,
+  },
+  sourceBadge: {
+    backgroundColor: Colors.ATU_GOLD,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  sourceText: {
+    color: Colors.BG_DARK,
+    fontSize: 10,
+    fontWeight: '700',
   },
   badge: {
     paddingHorizontal: 10,
@@ -89,11 +131,16 @@ const styles = StyleSheet.create({
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-end',
   },
   meta: {
     color: Colors.TEXT_SECONDARY,
     fontSize: 13,
+  },
+  cvMeta: {
+    color: Colors.ATU_GOLD,
+    fontSize: 11,
+    marginTop: 2,
   },
   reportBtn: {
     backgroundColor: Colors.ATU_BLUE,

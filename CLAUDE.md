@@ -192,9 +192,9 @@ Live at `https://park-api.fly.dev`
 | Phase | Status | Description |
 |---|---|---|
 | **Phase 0** | ✅ Complete | Demo app — mock data, self-report flow, all screens, 11/11 tests |
-| **Phase 1** | ✅ Complete | Backend live at park-api.fly.dev, frontend wired to live API |
+| **Phase 1** | ✅ Complete | Backend live at park-api.fly.dev, frontend wired to live API, PostgreSQL |
 | **Phase 2** | ✅ Complete | Background geofence, auto-prompt on lot entry, pub/sub bridge |
-| **Phase 3** | 🔲 Next | Drone / CV occupancy layer (FoxxeLabs research) |
+| **Phase 3** | ✅ Complete | Drone / CV occupancy layer (FoxxeLabs research) |
 | **Phase 4** | 🔲 Pending | Push alerts — "Lot A just freed up" |
 
 ---

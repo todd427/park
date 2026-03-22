@@ -16,6 +16,10 @@ export const MOCK_LOTS: Lot[] = [
       { latitude: 54.9518, longitude: -7.7370 },
     ],
     centroid: { latitude: 54.95215, longitude: -7.73625 },
+    cvOccupancy: 95,
+    cvConfidence: 0.87,
+    cvSource: 'drone',
+    dataSource: 'blended',
   },
   {
     id: 'B',
@@ -31,6 +35,10 @@ export const MOCK_LOTS: Lot[] = [
       { latitude: 54.9523, longitude: -7.7345 },
     ],
     centroid: { latitude: 54.95265, longitude: -7.73375 },
+    cvOccupancy: null,
+    cvConfidence: null,
+    cvSource: null,
+    dataSource: 'crowd',
   },
   {
     id: 'C',
@@ -46,6 +54,10 @@ export const MOCK_LOTS: Lot[] = [
       { latitude: 54.9508, longitude: -7.7380 },
     ],
     centroid: { latitude: 54.95115, longitude: -7.73725 },
+    cvOccupancy: 22,
+    cvConfidence: 0.93,
+    cvSource: 'camera',
+    dataSource: 'cv',
   },
   {
     id: 'D',
@@ -61,6 +73,10 @@ export const MOCK_LOTS: Lot[] = [
       { latitude: 54.9503, longitude: -7.7350 },
     ],
     centroid: { latitude: 54.95065, longitude: -7.73425 },
+    cvOccupancy: null,
+    cvConfidence: null,
+    cvSource: null,
+    dataSource: 'crowd',
   },
 ];
 

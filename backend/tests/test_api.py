@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.database import Base, ReportDB, get_db
+from backend.database import Base, CvEstimateDB, ReportDB, get_db
 from backend.main import app
 
 # Use in-memory SQLite for tests
@@ -215,3 +215,143 @@ def test_status_threshold_available(client, db_session):
     data = response.json()
     assert data["status"] == "available"
     assert data["fill_pct"] < 40
+
+
+# --- Phase 3: CV (Computer Vision) Occupancy Tests ---
+
+
+# 12. POST /api/cv/estimate with valid payload returns 201
+def test_post_cv_estimate(client):
+    response = client.post(
+        "/api/cv/estimate",
+        json={
+            "lot_id": "A",
+            "occupied_spaces": 80,
+            "total_spaces": 120,
+            "confidence": 0.85,
+            "source": "drone",
+        },
+        headers={"X-API-Key": "park-cv-dev-key"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["lot_id"] == "A"
+    assert data["occupied_spaces"] == 80
+    assert data["total_spaces"] == 120
+    assert data["confidence"] == 0.85
+    assert data["source"] == "drone"
+    assert "id" in data
+
+
+# 13. POST /api/cv/estimate without API key returns 403
+def test_post_cv_estimate_no_auth(client):
+    response = client.post(
+        "/api/cv/estimate",
+        json={
+            "lot_id": "A",
+            "occupied_spaces": 80,
+            "total_spaces": 120,
+            "confidence": 0.85,
+            "source": "drone",
+        },
+    )
+    assert response.status_code == 403
+
+
+# 14. POST /api/cv/estimate with invalid lot returns 422
+def test_post_cv_estimate_invalid_lot(client):
+    response = client.post(
+        "/api/cv/estimate",
+        json={
+            "lot_id": "Z",
+            "occupied_spaces": 10,
+            "total_spaces": 50,
+            "confidence": 0.9,
+            "source": "camera",
+        },
+        headers={"X-API-Key": "park-cv-dev-key"},
+    )
+    assert response.status_code == 422
+
+
+# 15. GET /api/cv/latest returns estimates
+def test_get_cv_latest(client):
+    # First submit a CV estimate
+    client.post(
+        "/api/cv/estimate",
+        json={
+            "lot_id": "B",
+            "occupied_spaces": 30,
+            "total_spaces": 60,
+            "confidence": 0.92,
+            "source": "simulation",
+        },
+        headers={"X-API-Key": "park-cv-dev-key"},
+    )
+    response = client.get("/api/cv/latest")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    lot_ids = {e["lot_id"] for e in data}
+    assert "B" in lot_ids
+
+
+# 16. CV data blends with crowd reports
+def test_cv_crowd_blending(client, db_session):
+    now = datetime.now(timezone.utc)
+
+    # Insert 5 crowd reports for lot A — all "full" (100% crowd fill)
+    for i in range(5):
+        db_session.add(
+            ReportDB(
+                lot_id="A",
+                report_type="full",
+                timestamp=now - timedelta(minutes=i),
+                user_id=f"user-blend-{i}",
+            )
+        )
+    db_session.commit()
+
+    # Submit a CV estimate showing lot A at 20% occupancy (low)
+    cv_estimate = CvEstimateDB(
+        lot_id="A",
+        occupied_spaces=24,
+        total_spaces=120,
+        confidence=0.9,
+        source="drone",
+        timestamp=now,
+    )
+    db_session.add(cv_estimate)
+    db_session.commit()
+
+    response = client.get("/api/lots/A")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data_source"] == "blended"
+    # Crowd says 100%, CV says 20%. Blended should be between them.
+    assert 20 < data["fill_pct"] < 100
+
+
+# 17. CV-only lot shows data_source=cv
+def test_cv_only_data_source(client, db_session):
+    now = datetime.now(timezone.utc)
+
+    # Insert only a CV estimate for lot C (no crowd reports)
+    cv_estimate = CvEstimateDB(
+        lot_id="C",
+        occupied_spaces=10,
+        total_spaces=45,
+        confidence=0.8,
+        source="camera",
+        timestamp=now,
+    )
+    db_session.add(cv_estimate)
+    db_session.commit()
+
+    response = client.get("/api/lots/C")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data_source"] == "cv"
+    assert data["cv_occupancy"] is not None
+    assert data["cv_confidence"] == 0.8
+    assert data["cv_source"] == "camera"

@@ -1,5 +1,5 @@
 import { type ParkingStatus } from '../constants/theme';
-import { type Lot } from '../data/types';
+import { type DataSource, type Lot } from '../data/types';
 import { MOCK_LOTS } from '../data/mockData';
 
 const API_BASE = __DEV__
@@ -14,6 +14,10 @@ interface ApiLot {
   fill_pct: number;
   report_count: number;
   last_updated: string | null;
+  cv_occupancy: number | null;
+  cv_confidence: number | null;
+  cv_source: string | null;
+  data_source: string;
 }
 
 /** Map API response to frontend Lot type, preserving coordinates from mock data */
@@ -28,6 +32,10 @@ function mapApiLot(apiLot: ApiLot): Lot {
     reportCount: apiLot.report_count,
     coordinates: mockLot?.coordinates ?? [],
     centroid: mockLot?.centroid ?? { latitude: 0, longitude: 0 },
+    cvOccupancy: apiLot.cv_occupancy,
+    cvConfidence: apiLot.cv_confidence,
+    cvSource: apiLot.cv_source,
+    dataSource: (apiLot.data_source ?? 'crowd') as DataSource,
   };
 }
 

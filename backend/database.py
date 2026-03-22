@@ -5,6 +5,7 @@ import os
 from sqlalchemy import (
     Column,
     DateTime,
+    Float,
     Index,
     Integer,
     Text,
@@ -40,6 +41,23 @@ class ReportDB(Base):
 
     __table_args__ = (
         Index("idx_reports_lot_timestamp", "lot_id", "timestamp"),
+    )
+
+
+class CvEstimateDB(Base):
+    __tablename__ = "cv_estimates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lot_id = Column(Text, nullable=False)
+    occupied_spaces = Column(Integer, nullable=False)
+    total_spaces = Column(Integer, nullable=False)
+    confidence = Column(Float, nullable=False)  # 0.0 to 1.0
+    source = Column(Text, nullable=False)  # "drone", "camera", "simulation"
+    image_url = Column(Text, nullable=True)  # optional reference to source image
+    timestamp = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_cv_estimates_lot_timestamp", "lot_id", "timestamp"),
     )
 
 
