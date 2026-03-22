@@ -37,9 +37,12 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Park uses your location to detect which car park you're near."
+          "locationAlwaysAndWhenInUsePermission": "Park uses your location to detect which car park you're near.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
-      ]
+      ],
+      "expo-task-manager"
     ]
   }
 }

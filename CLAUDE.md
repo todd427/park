@@ -276,8 +276,8 @@ python-dateutil==2.9.0
 | Phase | Status | Description |
 |---|---|---|
 | **Phase 0** | ✅ Complete | Demo app — mock data, self-report flow, all screens, 11/11 tests |
-| **Phase 1** | ✅ Complete | Backend live at park-api.fly.dev, frontend wired to live API, loading/error states |
-| **Phase 2** | 🔲 Next | Lorg geofence integration — auto-prompt on lot entry |
+| **Phase 1** | ✅ Complete | Backend live at park-api.fly.dev, frontend wired to live API, PostgreSQL |
+| **Phase 2** | ✅ Complete | Lorg geofence integration — auto-prompt on lot entry |
 | **Phase 3** | 🔲 Pending | Drone / CV occupancy layer (FoxxeLabs research) |
 | **Phase 4** | 🔲 Pending | Push alerts — "Lot A just freed up" |
 

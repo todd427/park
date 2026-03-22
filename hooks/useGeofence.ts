@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 import { MOCK_LOTS } from '../data/mockData';
+import { onGeofenceEntry } from '../services/geofenceEvents';
+import { startGeofenceTracking } from '../services/locationTask';
 
 const GEOFENCE_RADIUS_M = 80;
 
@@ -22,12 +24,32 @@ function haversineDistance(
 
 export function useGeofence(onEnterLot: (lotId: string) => void) {
   const [hasPermission, setHasPermission] = useState(false);
+  const [backgroundEnabled, setBackgroundEnabled] = useState(false);
   const visitedRef = useRef<Set<string>>(new Set());
+
+  // Listen for background geofence events
+  useEffect(() => {
+    const unsubscribe = onGeofenceEntry((lotId) => {
+      onEnterLot(lotId);
+    });
+    return unsubscribe;
+  }, [onEnterLot]);
 
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;
 
     (async () => {
+      // Try to start background tracking first (lorg pattern)
+      const bgStarted = await startGeofenceTracking();
+      setBackgroundEnabled(bgStarted);
+
+      if (bgStarted) {
+        // Background task handles everything — no foreground watcher needed
+        setHasPermission(true);
+        return;
+      }
+
+      // Fallback: foreground-only location watching (Phase 0 behaviour)
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return;
       setHasPermission(true);
@@ -60,5 +82,5 @@ export function useGeofence(onEnterLot: (lotId: string) => void) {
     };
   }, [onEnterLot]);
 
-  return { hasPermission };
+  return { hasPermission, backgroundEnabled };
 }

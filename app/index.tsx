@@ -56,10 +56,17 @@ export default function MapScreen() {
   const handleDismiss = useCallback(() => setSelectedLot(null), []);
   const handleToastDismiss = useCallback(() => setToastVisible(false), []);
 
-  useGeofence(handleLotPress);
+  const { backgroundEnabled } = useGeofence(handleLotPress);
 
   return (
     <GestureHandlerRootView style={styles.container}>
+      {backgroundEnabled && (
+        <View style={styles.geofenceBanner}>
+          <Text style={styles.geofenceText}>
+            Auto-detect is on — we'll prompt you when you're near a lot
+          </Text>
+        </View>
+      )}
       <MapView
         style={styles.map}
         mapType="hybrid"
@@ -131,6 +138,22 @@ const styles = StyleSheet.create({
   legendText: {
     color: Colors.TEXT_PRIMARY,
     fontSize: 11,
+    fontWeight: '600',
+  },
+  geofenceBanner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    backgroundColor: Colors.ATU_BLUE + 'E6',
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  geofenceText: {
+    color: Colors.ATU_GOLD,
+    fontSize: 12,
     fontWeight: '600',
   },
 });
