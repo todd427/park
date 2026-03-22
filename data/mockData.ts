@@ -1,0 +1,72 @@
+import { type Lot } from './types';
+
+// ATU Letterkenny campus — approximate lot bounding polygons
+export const MOCK_LOTS: Lot[] = [
+  {
+    id: 'A',
+    name: 'Main Car Park',
+    capacity: 120,
+    status: 'full',
+    fillPct: 92,
+    reportCount: 7,
+    coordinates: [
+      { latitude: 54.9525, longitude: -7.7370 },
+      { latitude: 54.9525, longitude: -7.7355 },
+      { latitude: 54.9518, longitude: -7.7355 },
+      { latitude: 54.9518, longitude: -7.7370 },
+    ],
+    centroid: { latitude: 54.95215, longitude: -7.73625 },
+  },
+  {
+    id: 'B',
+    name: 'Sports Centre',
+    capacity: 60,
+    status: 'filling',
+    fillPct: 55,
+    reportCount: 4,
+    coordinates: [
+      { latitude: 54.9530, longitude: -7.7345 },
+      { latitude: 54.9530, longitude: -7.7330 },
+      { latitude: 54.9523, longitude: -7.7330 },
+      { latitude: 54.9523, longitude: -7.7345 },
+    ],
+    centroid: { latitude: 54.95265, longitude: -7.73375 },
+  },
+  {
+    id: 'C',
+    name: 'West Block',
+    capacity: 45,
+    status: 'available',
+    fillPct: 18,
+    reportCount: 3,
+    coordinates: [
+      { latitude: 54.9515, longitude: -7.7380 },
+      { latitude: 54.9515, longitude: -7.7365 },
+      { latitude: 54.9508, longitude: -7.7365 },
+      { latitude: 54.9508, longitude: -7.7380 },
+    ],
+    centroid: { latitude: 54.95115, longitude: -7.73725 },
+  },
+  {
+    id: 'D',
+    name: 'Staff / Overflow',
+    capacity: 80,
+    status: 'unknown',
+    fillPct: 0,
+    reportCount: 0,
+    coordinates: [
+      { latitude: 54.9510, longitude: -7.7350 },
+      { latitude: 54.9510, longitude: -7.7335 },
+      { latitude: 54.9503, longitude: -7.7335 },
+      { latitude: 54.9503, longitude: -7.7350 },
+    ],
+    centroid: { latitude: 54.95065, longitude: -7.73425 },
+  },
+];
+
+export const CAMPUS_CENTER = {
+  latitude: 54.9516,
+  longitude: -7.7355,
+  latitudeDelta: 0.005,
+  longitudeDelta: 0.005,
+};
