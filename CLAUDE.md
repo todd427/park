@@ -33,15 +33,18 @@ park/
 │   ├── ReportModal.tsx
 │   └── SuccessToast.tsx
 ├── hooks/
-│   ├── useGeofence.ts
+│   ├── useGeofence.ts          # background perms first, falls back to foreground
 │   └── useUserId.ts            # persistent anonymous UUID via AsyncStorage
 ├── services/
-│   └── api.ts                  # API client, __DEV__ switching
+│   ├── api.ts                  # API client, __DEV__ switching, mock fallback
+│   ├── locationTask.ts         # background location task (lorg pattern)
+│   └── geofenceEvents.ts       # pub/sub bridge: background task → React state
 ├── data/
+│   ├── lots.ts                 # lot polygons + centroids
 │   └── mockData.ts             # fallback if API unreachable
 ├── constants/
 │   ├── theme.ts
-│   └── config.ts               # API_BASE, POLL_INTERVAL_MS, etc.
+│   └── config.ts
 ├── backend/
 │   ├── main.py
 │   ├── models.py
@@ -49,9 +52,10 @@ park/
 │   ├── requirements.txt
 │   └── tests/
 │       └── test_api.py         # 11 passing pytest tests
+├── index.ts                    # imports locationTask.ts before expo-router
 ├── fly.toml
 ├── Dockerfile
-├── app.json
+├── app.json                    # background location + foreground service enabled
 ├── package.json
 └── tsconfig.json
 ```
@@ -89,21 +93,17 @@ Four lots on ATU Letterkenny campus:
 | `C` | West Block | 45 spaces |
 | `D` | Staff / Overflow | 80 spaces |
 
-Each lot has a GPS bounding polygon (geofence) used by `useGeofence.ts`.
+Lot polygons and centroids defined in `data/lots.ts`.
 
 ---
 
 ## Status Logic (Report Decay)
 
-Reports decay over time. Each report contributes a weighted vote:
-
 | Age | Weight |
 |---|---|
-| < 45 minutes | 1.0 (full weight) |
-| 45–90 minutes | 0.5 (half weight) |
+| < 45 minutes | 1.0 |
+| 45–90 minutes | 0.5 |
 | > 90 minutes | 0.0 (ignored) |
-
-**Status thresholds** (based on weighted % of reports saying "full"):
 
 | Weighted % Full | Status |
 |---|---|
@@ -118,147 +118,63 @@ Reports decay over time. Each report contributes a weighted vote:
 
 ### MapScreen (`app/index.tsx`)
 - Full-screen satellite map (react-native-maps, `HYBRID` type)
-- Centred on ATU Letterkenny campus coordinates
-- 4 colour-coded lot overlays (`LotOverlay`) — colour from status
-- Tap a lot overlay → opens `ReportModal`
+- Centred on ATU Letterkenny campus
+- 4 colour-coded lot overlays from `data/lots.ts` polygons
+- Tap overlay → `ReportModal`
 - Status legend strip at bottom
-- Tab bar: Map | List
 - Loading spinner (ATU_BLUE) while fetching
 - Error banner if API unreachable
+- ATU Blue banner when background auto-detect is active
 
 ### ListScreen (`app/list.tsx`)
 - Scrollable `FlatList` of `LotCard` components
-- Each card shows: lot name, status badge, fill percentage bar, report count, "Report" button
-- Pull-to-refresh (calls live API)
+- Pull-to-refresh → live API
 - Skeleton placeholders on first load
-- Inline error state with retry button
+- Inline error state with retry
 
-### LotCard (`components/LotCard.tsx`)
-```tsx
-interface LotCardProps {
-  lot: Lot;
-  onReport: (lotId: string) => void;
-}
-```
-- Status badge: coloured pill (Available / Filling / Full / No Data)
-- Fill bar: animated progress bar, colour matches status
-- Report count: "3 reports in last 90 min"
-- Report button → opens `ReportModal`
-
-### LotOverlay (`components/LotOverlay.tsx`)
-- `react-native-maps` `Polygon` with fill colour from status
-- Semi-transparent (opacity 0.45)
-- Stroke: white at 0.8 opacity
-- Tap handler → `onPress`
-
-### ReportModal (`components/ReportModal.tsx`)
-- Bottom sheet (slide up)
-- Lot name + current status header
-- Two large tap targets: "Found a space ✅" / "It's full 🔴"
-- Spinner in tapped button during submission
-- Both buttons disabled while in-flight
-- Inline error on failure — does not dismiss modal
-- On success: dismiss + `SuccessToast`
-
-### SuccessToast (`components/SuccessToast.tsx`)
-- Animated slide-up notification
-- "Thanks! Your report helps other students."
-- Auto-dismisses after 2.5s
-- Positioned above tab bar
+### LotCard / LotOverlay / ReportModal / SuccessToast
+- (unchanged from Phase 1 — see git history)
 
 ### useGeofence (`hooks/useGeofence.ts`)
-- `expo-location` background watch (same pattern as `todd427/lorg`)
-- Haversine distance to each lot centroid
-- Auto-prompts `ReportModal` on lot entry (80m radius)
-- Debounced — once per lot entry per session
+- Requests background location first (lorg pattern), falls back to foreground-only
+- Subscribes to `geofenceEvents.ts` pub/sub from background task
+- Returns `{ hasPermission, backgroundEnabled }`
+- `onEnterLot(lotId)` callback — debounced, once per lot per session
+- Visited lots persisted in `AsyncStorage` across background wakes
+- Permission denied → graceful degradation, no crash
 
-### useUserId (`hooks/useUserId.ts`)
-- Generates anonymous UUID once via `expo-crypto`
-- Persists via `AsyncStorage`
-- Returned UUID used in all report submissions
+### services/locationTask.ts
+- Background location task registered at module scope via `TaskManager.defineTask`
+- Runs geofence checks even when app is backgrounded
+- Android foreground service notification: "Detecting nearby car parks" (ATU Blue)
+
+### services/geofenceEvents.ts
+- Pub/sub event emitter bridging background task → React components
+- Necessary because background tasks cannot directly update React state
 
 ### services/api.ts
-- Single source for all API calls — screens never call `fetch` directly
-- `__DEV__` switching: `http://localhost:8000` (emulator) vs `https://park-api.fly.dev`
-- 60s poll interval, 10s request timeout via `AbortController`
-- Mock data fallback if API unreachable
+- All API calls — screens never call `fetch` directly
+- `__DEV__` switching: `http://localhost:8000` vs `https://park-api.fly.dev`
+- 60s poll, 10s timeout, mock fallback if unreachable
 
 ---
 
-## Backend API (FastAPI — `backend/main.py`)
+## Backend API
 
-### Endpoints
+Live at `https://park-api.fly.dev`
 
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/reports` | Submit a parking report |
-| `GET` | `/api/lots` | Get status of all lots |
-| `GET` | `/api/lots/{lot_id}` | Get status of one lot |
+| `GET` | `/api/lots` | All lots with live status |
+| `GET` | `/api/lots/{lot_id}` | Single lot |
 | `GET` | `/api/status` | Health check |
 
-### Database Schema
-
-```sql
-CREATE TABLE reports (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    lot_id      TEXT NOT NULL,
-    report_type TEXT NOT NULL CHECK(report_type IN ('found', 'full')),
-    timestamp   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    user_id     TEXT NOT NULL
-);
-
-CREATE INDEX idx_reports_lot_timestamp ON reports(lot_id, timestamp);
-```
-
 ---
 
-## Required Pytest Tests (11 — all passing)
+## Tests
 
-File: `backend/tests/test_api.py`
-
-1. Health check returns 200
-2. GET /api/lots returns list of 4 lots
-3. GET /api/lots/A returns lot A
-4. GET /api/lots/Z returns 404
-5. POST /api/reports with valid payload returns 201
-6. POST /api/reports with type=full returns 201
-7. POST /api/reports with invalid lot_id returns 422
-8. POST /api/reports with invalid report_type returns 422
-9. Report decay — report older than 90min has zero weight
-10. Status threshold — ≥70% full reports → status=full
-11. Status threshold — <40% full reports → status=available
-
----
-
-## Pinned Dependencies
-
-### Frontend (`package.json`)
-
-```json
-{
-  "dependencies": {
-    "expo": "~52.0.0",
-    "expo-location": "~17.0.0",
-    "expo-router": "~4.0.0",
-    "react-native": "0.76.5",
-    "react-native-maps": "1.18.0",
-    "@gorhom/bottom-sheet": "^5.0.0"
-  }
-}
-```
-
-### Backend (`backend/requirements.txt`)
-
-```
-fastapi==0.115.0
-uvicorn==0.32.0
-pydantic==2.9.0
-sqlalchemy==2.0.36
-psycopg2-binary==2.9.9
-pytest==8.3.0
-httpx==0.28.0
-python-dateutil==2.9.0
-```
+11 pytest tests in `backend/tests/test_api.py` — all passing.
 
 ---
 
@@ -266,7 +182,7 @@ python-dateutil==2.9.0
 
 - **App:** `park-api` — `https://park-api.fly.dev`
 - **Region:** LHR
-- **Database:** `park-db` (Postgres, attached, `DATABASE_URL` secret set by Fly)
+- **Database:** `park-db` (Postgres, `DATABASE_URL` secret set by Fly)
 - **VM:** shared-cpu-1x, 256MB
 
 ---
@@ -276,9 +192,9 @@ python-dateutil==2.9.0
 | Phase | Status | Description |
 |---|---|---|
 | **Phase 0** | ✅ Complete | Demo app — mock data, self-report flow, all screens, 11/11 tests |
-| **Phase 1** | ✅ Complete | Backend live at park-api.fly.dev, frontend wired to live API, PostgreSQL |
-| **Phase 2** | ✅ Complete | Lorg geofence integration — auto-prompt on lot entry |
-| **Phase 3** | 🔲 Pending | Drone / CV occupancy layer (FoxxeLabs research) |
+| **Phase 1** | ✅ Complete | Backend live at park-api.fly.dev, frontend wired to live API |
+| **Phase 2** | ✅ Complete | Background geofence, auto-prompt on lot entry, pub/sub bridge |
+| **Phase 3** | 🔲 Next | Drone / CV occupancy layer (FoxxeLabs research) |
 | **Phase 4** | 🔲 Pending | Push alerts — "Lot A just freed up" |
 
 ---
@@ -286,122 +202,140 @@ python-dateutil==2.9.0
 ## Build Instructions for Claude Code
 
 1. Scaffold Expo project: `npx create-expo-app park --template blank-typescript`
-2. Install pinned dependencies above
-3. Implement `constants/theme.ts` first — all colours defined before any component
-4. Build screens in order: MapScreen → ListScreen → ReportModal → SuccessToast
-5. Implement `useGeofence.ts` and `useUserId.ts`
-6. Implement `services/api.ts` with `__DEV__` switching and mock fallback
-7. Populate `mockData.ts` with the 4 lots above
-8. Build FastAPI backend in `backend/` — all 4 endpoints + decay logic
-9. Write 11 pytest tests — all must pass
-10. Verify on Android (physical device or emulator) — this is Android-first
-11. **After completing each phase: `git add -A && git commit -m "phaseN: ..." && git push`**
+2. Install pinned dependencies
+3. `constants/theme.ts` first — all colours before any component
+4. Build screens: MapScreen → ListScreen → ReportModal → SuccessToast
+5. `services/locationTask.ts` + `services/geofenceEvents.ts` (lorg pattern)
+6. `hooks/useGeofence.ts` + `hooks/useUserId.ts`
+7. `services/api.ts` with `__DEV__` switching and mock fallback
+8. `data/lots.ts` with lot polygons
+9. FastAPI backend — 4 endpoints + decay logic
+10. 11 pytest tests — all must pass
+11. **After each phase: `git add -A && git commit -m "phaseN: ..." && git push`**
 
 **Do not use Expo Go for final testing — use a dev build.**
 
 ---
 
-## Phase 2 — Lorg Geofence Integration
+## Phase 3 — Drone / CV Occupancy Layer
 
 ### Goal
 
-The `useGeofence.ts` hook exists but currently uses hardcoded lot centroids and a simple
-Haversine check. Phase 2 replaces this with lorg's proven geofence pattern
-(`todd427/lorg`) so the app auto-prompts the user to report when they physically
-enter a campus parking lot.
+Add a computer-vision-derived occupancy feed as a second data source alongside
+crowdsourced reports. A drone or fixed camera periodically images the lots; a CV
+pipeline counts visible vehicles and posts occupancy estimates to the backend.
+The app blends CV estimates with crowdsourced reports to produce a higher-confidence
+status for each lot.
+
+This is a FoxxeLabs research phase — the CV pipeline is out of scope for Claude Code.
+What Claude Code builds here is the **backend ingestion endpoint** and the
+**frontend blending logic**.
 
 ---
 
-### Background
+### Step 1 — Backend: CV Ingestion Endpoint
 
-`todd427/lorg` is Todd's GPS worldline tracker — FastAPI on Fly.io, React Native/Expo,
-background GPS every 5 minutes. It has a working geofence implementation. Reuse that
-pattern directly rather than reinventing it.
+Add a new authenticated endpoint to `backend/main.py`:
 
----
+```
+POST /api/cv/occupancy
+```
 
-### Step 1 — Review Lorg's Geofence Implementation
-
-Read `todd427/lorg` hooks and location handling before writing any code. Understand:
-- How it requests `expo-location` background permissions
-- How it sets up the background location task
-- How it computes entry/exit events
-
-Mirror that pattern in Park's `useGeofence.ts`.
-
----
-
-### Step 2 — Define Lot Polygons (`data/lots.ts`)
-
-Replace centroid + radius with proper bounding polygons for each lot.
-Coordinates are approximate — use ATU Letterkenny campus (54.9998° N, 7.7184° W) as reference.
-
-```typescript
-export interface LotPolygon {
-  id: string;
-  name: string;
-  polygon: { latitude: number; longitude: number }[];
-  centroid: { latitude: number; longitude: number };
+Payload:
+```json
+{
+  "lot_id": "A",
+  "vehicle_count": 87,
+  "capacity": 120,
+  "captured_at": "2026-03-22T14:30:00Z",
+  "source": "drone",
+  "confidence": 0.91
 }
 ```
 
-Lot polygons should be tight enough to avoid false triggers from the road or adjacent lots.
+- Auth: `X-API-Key` header (new env var `PARK_CV_API_KEY`, separate from any future user auth)
+- Stored in new table `cv_observations`
+- CV observations decay after 4 hours (much slower than crowdsourced 90-min decay)
+- `confidence` field (0.0–1.0) stored but not yet used in blending — reserved for Phase 3+
 
----
-
-### Step 3 — Update `useGeofence.ts`
-
-- Request background location permission on first app launch (show rationale modal before requesting)
-- Register a background location task using `TaskManager` + `expo-location` (same as lorg)
-- On position update, run point-in-polygon test against all 4 lot polygons
-- On lot entry: fire `onEnterLot(lotId)` callback — debounced, once per lot per session
-- On lot exit: clear debounce for that lot (so it can trigger again next entry)
-- If permission denied: hook returns `{ permissionDenied: true }` — screens degrade gracefully, no crash
-
----
-
-### Step 4 — Wire Auto-Prompt in Both Screens
-
-Both `MapScreen` and `ListScreen` should respond to `onEnterLot`:
-
-```typescript
-useGeofence({
-  onEnterLot: (lotId) => {
-    setAutoPromptLotId(lotId);  // opens ReportModal for that lot
-  }
-});
+New DB table:
+```sql
+CREATE TABLE cv_observations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    lot_id       TEXT NOT NULL,
+    vehicle_count INTEGER NOT NULL,
+    capacity     INTEGER NOT NULL,
+    captured_at  DATETIME NOT NULL,
+    source       TEXT NOT NULL DEFAULT 'drone',
+    confidence   REAL NOT NULL DEFAULT 1.0
+);
 ```
 
-The auto-prompt should feel natural — a gentle bottom sheet, not an intrusive alert.
-User can dismiss without reporting. No repeated prompts for the same lot visit.
+---
+
+### Step 2 — Backend: Blended Status Logic
+
+Update `compute_lot_status()` in `backend/main.py` to blend CV + crowdsourced:
+
+- If a CV observation exists within the last 4 hours, compute a CV fill_pct:
+  `cv_fill_pct = vehicle_count / capacity * 100`
+- Blend: `blended_pct = (cv_fill_pct * 0.6) + (crowd_fill_pct * 0.4)`
+  - If no recent crowd reports, use CV alone (weight 1.0)
+  - If no recent CV observation, use crowd alone (existing logic unchanged)
+- Add `data_source` field to `LotResponse`:
+  - `"crowd"` — crowd only
+  - `"cv"` — CV only
+  - `"blended"` — both sources
 
 ---
 
-### Step 5 — Permission UX
+### Step 3 — Frontend: Data Source Indicator
 
-Add a `PermissionRationale` component shown once before requesting background location:
+Add a subtle data source indicator to `LotCard` and `MapScreen`:
 
-- Heading: "Help other students find parking"
-- Body: "Park can notify you to report availability when you arrive at a campus lot. This uses background location — only while you're on campus."
-- Two buttons: "Allow" (requests permission) / "Not now" (skips, never shows again)
-- Store decision in `AsyncStorage` — don't ask again if user said "Not now"
+- Small icon/label: 📡 "Live" (blended), 👥 "Community" (crowd only), 📷 "Camera" (CV only)
+- Shown in `TEXT_SECONDARY` below the status badge — unobtrusive
+- Tapping it shows a one-line tooltip explaining the source
 
 ---
 
-### Validation Checklist (Phase 2 Done When)
+### Step 4 — New Pytest Tests (add to `test_api.py`)
 
-- [ ] Background location permission requested with rationale modal
-- [ ] "Not now" decision persisted — rationale never shown again after dismissal
-- [ ] Walking/driving into a lot polygon triggers `onEnterLot` on a physical device
-- [ ] `ReportModal` auto-opens for the correct lot on entry
-- [ ] No double-prompt for the same lot visit
-- [ ] Prompt fires again on next visit (after exit + re-entry)
-- [ ] Permission denied → app works normally, no crash, no prompt
-- [ ] Lot overlays on MapScreen still render correctly from `data/lots.ts` polygons
-- [ ] 11/11 pytest tests still passing
+```python
+# 12. POST /api/cv/occupancy with valid payload returns 201
+def test_post_cv_occupancy():
+
+# 13. POST /api/cv/occupancy without API key returns 401
+def test_cv_auth_required():
+
+# 14. CV observation within 4h contributes to blended status
+def test_cv_blended_status():
+
+# 15. CV observation older than 4h is ignored
+def test_cv_decay_expired():
+
+# 16. No CV data → crowd-only status unchanged
+def test_cv_absent_falls_back_to_crowd():
+```
+
+All 16 tests must pass.
+
+---
+
+### Validation Checklist (Phase 3 Done When)
+
+- [ ] `POST /api/cv/occupancy` returns 201 with valid key
+- [ ] `POST /api/cv/occupancy` returns 401 without key
+- [ ] `GET /api/lots` returns `data_source` field on each lot
+- [ ] Blended status correctly weights 60% CV / 40% crowd
+- [ ] CV observation older than 4h falls back to crowd-only
+- [ ] No CV + no crowd → `unknown`
+- [ ] Data source indicator visible on LotCard (not intrusive)
+- [ ] Tooltip explains source on tap
+- [ ] All 16 pytest tests passing
 - [ ] `git push` after completion
 
 ---
 
-*PRD version: 1.2 — 2026-03-22 (Phase 2 added)*
+*PRD version: 1.3 — 2026-03-22 (Phase 3 added)*
 *todd427/park*
