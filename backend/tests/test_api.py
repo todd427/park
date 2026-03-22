@@ -8,7 +8,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.database import Base, CvEstimateDB, ReportDB, get_db
+from unittest.mock import MagicMock, patch
+
+from backend.database import Base, CvEstimateDB, PushTokenDB, ReportDB, get_db
 from backend.main import app
 
 # Use in-memory SQLite for tests
@@ -355,3 +357,93 @@ def test_cv_only_data_source(client, db_session):
     assert data["cv_occupancy"] is not None
     assert data["cv_confidence"] == 0.8
     assert data["cv_source"] == "camera"
+
+
+# --- Phase 4: Push Notification Tests ---
+
+
+# 18. POST /api/push/register returns 201
+def test_register_push_token(client):
+    response = client.post(
+        "/api/push/register",
+        json={"token": "ExponentPushToken[abc123]", "user_id": "user-push-1"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["token"] == "ExponentPushToken[abc123]"
+    assert data["user_id"] == "user-push-1"
+    assert "id" in data
+
+
+# 19. POST /api/push/register with same token upserts
+def test_register_push_token_upsert(client, db_session):
+    client.post(
+        "/api/push/register",
+        json={"token": "ExponentPushToken[dup123]", "user_id": "user-a"},
+    )
+    client.post(
+        "/api/push/register",
+        json={"token": "ExponentPushToken[dup123]", "user_id": "user-b"},
+    )
+    # Should only be 1 entry for this token
+    tokens = (
+        db_session.query(PushTokenDB)
+        .filter(PushTokenDB.token == "ExponentPushToken[dup123]")
+        .all()
+    )
+    assert len(tokens) == 1
+    assert tokens[0].user_id == "user-b"
+
+
+# 20. DELETE /api/push/unregister removes token
+def test_unregister_push_token(client, db_session):
+    client.post(
+        "/api/push/register",
+        json={"token": "ExponentPushToken[del456]", "user_id": "user-del"},
+    )
+    response = client.request(
+        "DELETE",
+        "/api/push/unregister",
+        json={"token": "ExponentPushToken[del456]", "user_id": "user-del"},
+    )
+    assert response.status_code == 200
+    # Verify it's gone
+    count = (
+        db_session.query(PushTokenDB)
+        .filter(PushTokenDB.token == "ExponentPushToken[del456]")
+        .count()
+    )
+    assert count == 0
+
+
+# 21. Status transition triggers notification (mock the httpx call)
+def test_status_transition_notification(client, db_session):
+    # Register a push token
+    client.post(
+        "/api/push/register",
+        json={"token": "ExponentPushToken[notify789]", "user_id": "user-notify"},
+    )
+
+    # Lot D starts as "unknown". Insert enough "full" reports to make it "full".
+    # We need >=70% full. Submitting 10 full reports via the API will do it.
+    with patch("backend.main.httpx.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [{"status": "ok", "id": "fake-ticket-id"}]
+        }
+        mock_post.return_value = mock_response
+
+        # First report transitions from unknown -> full (100% full with 1 report)
+        response = client.post(
+            "/api/reports",
+            json={"lot_id": "D", "report_type": "full", "user_id": "user-t1"},
+        )
+        assert response.status_code == 201
+
+        # The background task runs synchronously in TestClient, so check the mock
+        assert mock_post.called
+        call_args = mock_post.call_args
+        assert call_args[0][0] == "https://exp.host/--/api/v2/push/send"
+        messages = call_args[1]["json"] if "json" in call_args[1] else call_args[0][1]
+        assert any("Staff / Overflow" in m["body"] for m in messages)

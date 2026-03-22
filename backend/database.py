@@ -44,6 +44,15 @@ class ReportDB(Base):
     )
 
 
+class PushTokenDB(Base):
+    __tablename__ = "push_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(Text, nullable=False, unique=True)
+    user_id = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
 class CvEstimateDB(Base):
     __tablename__ = "cv_estimates"
 

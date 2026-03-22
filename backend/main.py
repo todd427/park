@@ -1,21 +1,27 @@
 """FastAPI application for Park — ATU Letterkenny Parking Availability."""
 
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+import httpx
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from backend.database import CvEstimateDB, ReportDB, create_tables, get_db
+from backend.database import CvEstimateDB, PushTokenDB, ReportDB, create_tables, get_db
 from backend.models import (
     CvEstimateCreate,
     CvEstimateResponse,
     LotResponse,
+    PushTokenCreate,
+    PushTokenResponse,
     ReportCreate,
     ReportResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Park API", version="1.0.0")
 
@@ -175,9 +181,80 @@ def health_check():
     return {"status": "ok"}
 
 
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+# Meaningful status transitions that trigger push notifications
+NOTIFY_TRANSITIONS = {
+    ("full", "available"),
+    ("full", "filling"),
+    ("filling", "available"),
+    ("available", "full"),
+    ("filling", "full"),
+    ("unknown", "full"),
+    ("unknown", "filling"),
+    ("unknown", "available"),
+}
+
+
+def send_push_notifications(title: str, body: str, db: Session):
+    """Send Expo push notifications to all registered tokens (best-effort)."""
+    tokens = db.query(PushTokenDB).all()
+    if not tokens:
+        return
+
+    messages = [
+        {"to": t.token, "title": title, "body": body, "sound": "default"}
+        for t in tokens
+    ]
+
+    try:
+        resp = httpx.post(
+            EXPO_PUSH_URL,
+            json=messages,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json().get("data", [])
+            for i, ticket in enumerate(data):
+                if ticket.get("status") == "error" and ticket.get("details", {}).get(
+                    "error"
+                ) in ("DeviceNotRegistered", "InvalidCredentials"):
+                    # Remove invalid token
+                    db.query(PushTokenDB).filter(
+                        PushTokenDB.token == tokens[i].token
+                    ).delete()
+            db.commit()
+    except Exception:
+        logger.exception("Failed to send push notifications")
+
+
+def _build_push_body(lot_name: str, old_status: str, new_status: str) -> str:
+    """Build a human-friendly push notification body."""
+    if old_status == "full" and new_status in ("available", "filling"):
+        return f"{lot_name} just freed up!"
+    if new_status == "full":
+        return f"{lot_name} is now full"
+    if new_status == "filling":
+        return f"{lot_name} is now filling up"
+    if new_status == "available":
+        return f"{lot_name} is now available!"
+    return f"{lot_name} is now {new_status}!"
+
+
 @app.post("/api/reports", response_model=ReportResponse, status_code=201)
-def create_report(report: ReportCreate, db: Session = Depends(get_db)):
+def create_report(
+    report: ReportCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     """Submit a parking report."""
+    # Compute status BEFORE the new report
+    old_status = compute_lot_status(report.lot_id, db).status
+
     db_report = ReportDB(
         lot_id=report.lot_id,
         report_type=report.report_type,
@@ -187,6 +264,15 @@ def create_report(report: ReportCreate, db: Session = Depends(get_db)):
     db.add(db_report)
     db.commit()
     db.refresh(db_report)
+
+    # Compute status AFTER the new report
+    new_status = compute_lot_status(report.lot_id, db).status
+
+    if (old_status, new_status) in NOTIFY_TRANSITIONS:
+        lot_name = LOTS[report.lot_id]["name"]
+        body = _build_push_body(lot_name, old_status, new_status)
+        background_tasks.add_task(send_push_notifications, "Parking Update", body, db)
+
     return db_report
 
 
@@ -251,3 +337,40 @@ def get_cv_latest_for_lot(lot_id: str, db: Session = Depends(get_db)):
             status_code=404, detail=f"No recent CV estimate for lot '{lot_id}'"
         )
     return estimate
+
+
+# --- Phase 4: Push Notification Endpoints ---
+
+
+@app.post("/api/push/register", response_model=PushTokenResponse, status_code=201)
+def register_push_token(payload: PushTokenCreate, db: Session = Depends(get_db)):
+    """Register an Expo push token. Upserts if token already exists."""
+    existing = (
+        db.query(PushTokenDB).filter(PushTokenDB.token == payload.token).first()
+    )
+    if existing:
+        existing.user_id = payload.user_id
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    db_token = PushTokenDB(
+        token=payload.token,
+        user_id=payload.user_id,
+    )
+    db.add(db_token)
+    db.commit()
+    db.refresh(db_token)
+    return db_token
+
+
+@app.delete("/api/push/unregister")
+def unregister_push_token(payload: PushTokenCreate, db: Session = Depends(get_db)):
+    """Remove a push token."""
+    deleted = (
+        db.query(PushTokenDB).filter(PushTokenDB.token == payload.token).delete()
+    )
+    db.commit()
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return {"status": "removed"}

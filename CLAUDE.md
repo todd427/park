@@ -163,12 +163,11 @@ Polygons and centroids in `data/lots.ts`.
 
 | Phase | Status | Description |
 |---|---|---|
-| **Phase 0** | ✅ Complete | Mock data, all screens, 17/17 tests |
+| **Phase 0** | ✅ Complete | Mock data, all screens, 21/21 tests |
 | **Phase 1** | ✅ Complete | Live backend on Fly.io, frontend wired |
 | **Phase 2** | ✅ Complete | Background geofence, auto-prompt, pub/sub bridge |
 | **Phase 3** | ✅ Complete | CV occupancy layer, confidence-weighted blending |
-| **Phase 4** | 🔲 Next | EAS build — downloadable APK for demo |
-| **Phase 5** | 🔲 Pending | Push alerts — "Lot A just freed up" |
+| **Phase 4** | ✅ Complete | EAS Build + push alerts — "Lot A just freed up" |
 
 ---
 

@@ -10,6 +10,7 @@ import { ReportModal } from '../components/ReportModal';
 import { SuccessToast } from '../components/SuccessToast';
 import { useGeofence } from '../hooks/useGeofence';
 import { useUserId } from '../hooks/useUserId';
+import { usePushNotifications } from '../hooks/usePushNotifications';
 import { fetchLots, submitReport } from '../services/api';
 
 export default function MapScreen() {
@@ -17,6 +18,7 @@ export default function MapScreen() {
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const userId = useUserId();
+  usePushNotifications(userId);
 
   const loadLots = useCallback(async () => {
     try {

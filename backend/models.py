@@ -100,6 +100,20 @@ class CvEstimateResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PushTokenCreate(BaseModel):
+    token: str  # Expo push token like "ExponentPushToken[xxx]"
+    user_id: str
+
+
+class PushTokenResponse(BaseModel):
+    id: int
+    token: str
+    user_id: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class LotResponse(BaseModel):
     id: str
     name: str
