@@ -332,13 +332,11 @@ primary_region = "lhr"
 
 | Phase | Status | Description |
 |---|---|---|
-| **Phase 0** | 🔲 Not started | Demo app — mock data, self-report flow, all screens working |
-| **Phase 1** | 🔲 Pending | Wire to live Fly.io FastAPI backend, real persistence |
+| **Phase 0** | ✅ Complete | Demo app — mock data, self-report flow, all screens, 11/11 tests |
+| **Phase 1** | 🔲 In progress | Deploy to Fly.io, wire frontend to live backend, loading/error states |
 | **Phase 2** | 🔲 Pending | Lorg geofence integration — auto-prompt on lot entry |
 | **Phase 3** | 🔲 Pending | Drone / CV occupancy layer (FoxxeLabs research) |
 | **Phase 4** | 🔲 Pending | Push alerts — "Lot A just freed up" |
-
-**Start with Phase 0.** Build the complete app with mock data. All screens, all components, theming correct, geofence hook wired but using mock data. Run pytest against the backend skeleton (even with mock responses) — all 11 must pass.
 
 ---
 
@@ -353,10 +351,160 @@ primary_region = "lhr"
 7. Build FastAPI backend in `backend/` — all 4 endpoints + decay logic
 8. Write 11 pytest tests — all must pass
 9. Verify on Android (physical device or emulator) — this is Android-first
+10. **After completing each phase: `git add -A && git commit -m "phaseN: ..." && git push`**
 
 **Do not use Expo Go for final testing — use a dev build.**
 
 ---
 
-*PRD version: 1.0 — 2026-03-22*
-*Reconstructed from Mnemos by Claude — todd427/park*
+## Phase 1 — Live Backend & API Integration
+
+### Goal
+
+Replace mock data with live API calls to the deployed Fly.io backend. The app should work end-to-end: student taps a report on their phone → FastAPI records it → all other users see updated status within one refresh cycle.
+
+---
+
+### Step 1 — Deploy Backend to Fly.io
+
+The `fly.toml` and `Dockerfile` are already in the repo root (written in Phase 0).
+
+```bash
+cd backend
+fly launch --no-deploy   # confirm app name = park-api, region = lhr
+fly deploy               # builds Docker image, deploys to Fly.io
+```
+
+Verify:
+```bash
+curl https://park-api.fly.dev/api/status
+# → {"status": "ok"}
+
+curl https://park-api.fly.dev/api/lots
+# → [{...}, {...}, {...}, {...}]  (all 4 lots, status=unknown, no reports yet)
+```
+
+**The live base URL is:** `https://park-api.fly.dev`
+
+---
+
+### Step 2 — API Client (`hooks/useApi.ts`)
+
+Create `hooks/useApi.ts`. This is the single place all API calls live — screens never call `fetch` directly.
+
+```typescript
+const API_BASE = 'https://park-api.fly.dev';
+
+export interface ApiState<T> {
+  data: T | null;
+  loading: boolean;
+  error: string | null;
+}
+
+// GET /api/lots — returns all 4 lots with live status
+export function useLots(): ApiState<Lot[]> & { refresh: () => void }
+
+// POST /api/reports — submit a report, returns the created report
+export async function submitReport(
+  lotId: string,
+  reportType: 'found' | 'full',
+  userId: string
+): Promise<void>
+```
+
+Implementation notes:
+- `useLots` uses `useEffect` + `useState`, polls every 60 seconds (`setInterval`)
+- `userId` is a UUID generated once with `expo-crypto` and persisted with `AsyncStorage` — anonymous, never changes per device
+- All fetch calls have a 10s timeout via `AbortController`
+- On network error, surface the error string — do not silently swallow
+
+---
+
+### Step 3 — Wire Screens to Live Data
+
+#### MapScreen (`app/index.tsx`)
+- Replace `MOCK_LOTS` import with `useLots()` hook
+- Show `ActivityIndicator` (ATU_BLUE) centred on map while `loading === true`
+- Show an error banner (red strip, top of screen) if `error !== null`: "Could not load parking data. Pull to retry."
+- Lot overlays update reactively when `useLots` data refreshes
+
+#### ListScreen (`app/list.tsx`)
+- Replace `MOCK_LOTS` import with `useLots()` hook
+- Pass `refresh` from `useLots` as the `onRefresh` handler for pull-to-refresh
+- Show skeleton `LotCard` placeholders (3 grey animated bars) while loading on first load
+- Show inline error state (grey card, retry button) if fetch fails
+
+#### ReportModal (`components/ReportModal.tsx`)
+- On tap of either report button:
+  1. Show spinner inside the tapped button (replace icon with `ActivityIndicator`)
+  2. Call `submitReport(lotId, reportType, userId)`
+  3. On success: dismiss modal, show `SuccessToast`
+  4. On error: show inline error text below buttons — "Failed to submit. Please try again." — do not dismiss modal
+- Disable both buttons while submission is in flight (prevent double-tap)
+
+---
+
+### Step 4 — Environment Config (`constants/config.ts`)
+
+Create `constants/config.ts`:
+
+```typescript
+export const CONFIG = {
+  API_BASE: __DEV__
+    ? 'http://localhost:8000'   // local uvicorn during dev
+    : 'https://park-api.fly.dev',
+  POLL_INTERVAL_MS: 60_000,    // 60 seconds
+  REQUEST_TIMEOUT_MS: 10_000,  // 10 seconds
+  GEOFENCE_RADIUS_M: 80,
+};
+```
+
+`useApi.ts` imports from here — no hardcoded URLs anywhere else.
+
+---
+
+### Step 5 — Postgres on Fly.io (Production Database)
+
+The Phase 0 backend uses SQLite. For Fly.io prod, switch to Postgres:
+
+```bash
+fly postgres create --name park-db --region lhr --vm-size shared-cpu-1x --volume-size 1
+fly postgres attach park-db --app park-api
+# Fly sets DATABASE_URL secret automatically
+```
+
+Update `backend/database.py` to use `DATABASE_URL` env var when present, fall back to SQLite for local dev:
+
+```python
+import os
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./park.db")
+# If Postgres URL from Fly, replace postgres:// with postgresql+psycopg2://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
+```
+
+Add to `backend/requirements.txt`:
+```
+psycopg2-binary==2.9.9
+```
+
+---
+
+### Step 6 — Validation Checklist (Phase 1 Done When)
+
+- [ ] `curl https://park-api.fly.dev/api/status` returns `{"status": "ok"}`
+- [ ] MapScreen loads live lot data (not mock) — overlays colour correctly
+- [ ] ListScreen pull-to-refresh hits the live API
+- [ ] Submitting a report from ReportModal hits `POST /api/reports` — verify in Fly logs
+- [ ] Submitting a report on one device is visible on another device within 60s (next poll)
+- [ ] Loading spinner shown on MapScreen during initial fetch
+- [ ] Error banner shown on MapScreen when API is unreachable (test by disabling network)
+- [ ] Error state shown in ReportModal on submit failure
+- [ ] `__DEV__` correctly switches between localhost and prod URL
+- [ ] All 11 pytest tests still pass against local backend
+- [ ] `git push` after completion
+
+---
+
+*PRD version: 1.1 — 2026-03-22 (Phase 1 added)*
+*todd427/park*
