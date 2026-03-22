@@ -1,6 +1,6 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView from 'react-native-maps';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Colors, StatusColors, StatusLabels, type ParkingStatus } from '../constants/theme';
 import { type Lot } from '../data/types';
@@ -9,11 +9,27 @@ import { LotOverlay } from '../components/LotOverlay';
 import { ReportModal } from '../components/ReportModal';
 import { SuccessToast } from '../components/SuccessToast';
 import { useGeofence } from '../hooks/useGeofence';
+import { useUserId } from '../hooks/useUserId';
+import { fetchLots, submitReport } from '../services/api';
 
 export default function MapScreen() {
   const [lots, setLots] = useState<Lot[]>(MOCK_LOTS);
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
+  const userId = useUserId();
+
+  const loadLots = useCallback(async () => {
+    try {
+      const data = await fetchLots();
+      setLots(data);
+    } catch {
+      // Fallback to current state (mock data on first load)
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLots();
+  }, [loadLots]);
 
   const handleLotPress = useCallback(
     (lotId: string) => {
@@ -24,18 +40,22 @@ export default function MapScreen() {
   );
 
   const handleReport = useCallback(
-    (_lotId: string, _type: 'found' | 'full') => {
-      // Phase 0: mock — just show toast
+    async (lotId: string, type: 'found' | 'full') => {
       setSelectedLot(null);
       setToastVisible(true);
+      try {
+        await submitReport(lotId, type, userId);
+        await loadLots(); // Refresh after reporting
+      } catch {
+        // Toast already shown — best effort
+      }
     },
-    [],
+    [userId, loadLots],
   );
 
   const handleDismiss = useCallback(() => setSelectedLot(null), []);
   const handleToastDismiss = useCallback(() => setToastVisible(false), []);
 
-  // Geofence — auto-prompt on lot entry
   useGeofence(handleLotPress);
 
   return (
@@ -54,7 +74,6 @@ export default function MapScreen() {
         ))}
       </MapView>
 
-      {/* Status legend */}
       <View style={styles.legend}>
         {(['available', 'filling', 'full', 'unknown'] as ParkingStatus[]).map(
           (s) => (

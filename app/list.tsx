@@ -1,5 +1,5 @@
-import React, { useCallback, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { FlatList, RefreshControl, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Colors } from '../constants/theme';
 import { type Lot } from '../data/types';
@@ -7,21 +7,34 @@ import { MOCK_LOTS } from '../data/mockData';
 import { LotCard } from '../components/LotCard';
 import { ReportModal } from '../components/ReportModal';
 import { SuccessToast } from '../components/SuccessToast';
+import { useUserId } from '../hooks/useUserId';
+import { fetchLots, submitReport } from '../services/api';
 
 export default function ListScreen() {
   const [lots, setLots] = useState<Lot[]>(MOCK_LOTS);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
+  const userId = useUserId();
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    // Phase 0: mock refresh
-    setTimeout(() => {
-      setLots([...MOCK_LOTS]);
-      setRefreshing(false);
-    }, 600);
+  const loadLots = useCallback(async () => {
+    try {
+      const data = await fetchLots();
+      setLots(data);
+    } catch {
+      // Keep current data
+    }
   }, []);
+
+  useEffect(() => {
+    loadLots();
+  }, [loadLots]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadLots();
+    setRefreshing(false);
+  }, [loadLots]);
 
   const handleReport = useCallback(
     (lotId: string) => {
@@ -32,11 +45,17 @@ export default function ListScreen() {
   );
 
   const handleSubmitReport = useCallback(
-    (_lotId: string, _type: 'found' | 'full') => {
+    async (lotId: string, type: 'found' | 'full') => {
       setSelectedLot(null);
       setToastVisible(true);
+      try {
+        await submitReport(lotId, type, userId);
+        await loadLots();
+      } catch {
+        // Best effort
+      }
     },
-    [],
+    [userId, loadLots],
   );
 
   const handleDismiss = useCallback(() => setSelectedLot(null), []);

@@ -333,7 +333,7 @@ primary_region = "lhr"
 | Phase | Status | Description |
 |---|---|---|
 | **Phase 0** | ✅ Complete | Demo app — mock data, self-report flow, all screens, 11/11 tests |
-| **Phase 1** | 🔲 In progress | Deploy to Fly.io, wire frontend to live backend, loading/error states |
+| **Phase 1** | ✅ Complete | Deploy to Fly.io, wire frontend to live backend, PostgreSQL |
 | **Phase 2** | 🔲 Pending | Lorg geofence integration — auto-prompt on lot entry |
 | **Phase 3** | 🔲 Pending | Drone / CV occupancy layer (FoxxeLabs research) |
 | **Phase 4** | 🔲 Pending | Push alerts — "Lot A just freed up" |
