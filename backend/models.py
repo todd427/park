@@ -114,6 +114,28 @@ class PushTokenResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class OccupancyEvent(BaseModel):
+    lot_id: str
+    user_id: str
+
+    @field_validator("lot_id")
+    @classmethod
+    def validate_lot_id(cls, v: str) -> str:
+        if v not in VALID_LOT_IDS:
+            raise ValueError(f"lot_id must be one of {VALID_LOT_IDS}")
+        return v
+
+
+class OccupancySessionResponse(BaseModel):
+    id: int
+    lot_id: str
+    user_id: str
+    entered_at: datetime
+    exited_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
 class LotResponse(BaseModel):
     id: str
     name: str
@@ -126,3 +148,4 @@ class LotResponse(BaseModel):
     cv_confidence: Optional[float] = None
     cv_source: Optional[str] = None
     data_source: str = "crowd"
+    active_sessions: int = 0

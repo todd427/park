@@ -10,11 +10,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from backend.database import CvEstimateDB, PushTokenDB, ReportDB, create_tables, get_db
+from backend.database import (
+    CvEstimateDB,
+    OccupancySessionDB,
+    PushTokenDB,
+    ReportDB,
+    create_tables,
+    get_db,
+)
 from backend.models import (
     CvEstimateCreate,
     CvEstimateResponse,
     LotResponse,
+    OccupancyEvent,
+    OccupancySessionResponse,
     PushTokenCreate,
     PushTokenResponse,
     ReportCreate,
@@ -114,6 +123,19 @@ def compute_lot_status(lot_id: str, db: Session) -> LotResponse:
     cv_estimate = get_latest_cv_estimate(lot_id, db)
     has_cv = cv_estimate is not None
 
+    # Count active occupancy sessions (entered within last 4 hours, not exited)
+    session_cutoff = now - timedelta(hours=4)
+    active_sessions = (
+        db.query(OccupancySessionDB)
+        .filter(
+            OccupancySessionDB.lot_id == lot_id,
+            OccupancySessionDB.exited_at.is_(None),
+            OccupancySessionDB.entered_at >= session_cutoff,
+        )
+        .count()
+    )
+    has_passive = active_sessions > 0
+
     # Determine fill_pct and data_source via blending
     cv_occupancy = None
     cv_confidence = None
@@ -125,27 +147,50 @@ def compute_lot_status(lot_id: str, db: Session) -> LotResponse:
         cv_confidence = cv_estimate.confidence
         cv_source = cv_estimate.source
 
-    if has_crowd and has_cv:
-        # Blend crowd and CV data
+    # Passive occupancy calculation
+    passive_pct = (active_sessions / lot_info["capacity"]) * 100.0 if has_passive else 0.0
+    passive_weight = min(active_sessions, 10) / 10.0 if has_passive else 0.0
+
+    # Build blended fill_pct from all available sources
+    numerator = 0.0
+    denominator = 0.0
+    sources = []
+
+    if has_crowd:
         crowd_weight_factor = min(len(reports), 5) / 5.0
+        numerator += crowd_pct * crowd_weight_factor
+        denominator += crowd_weight_factor
+        sources.append("crowd")
+
+    if has_cv:
         cv_weight_factor = cv_estimate.confidence * 2.0
-        blended_fill_pct = (
-            crowd_pct * crowd_weight_factor + cv_pct * cv_weight_factor
-        ) / (crowd_weight_factor + cv_weight_factor)
-        fill_pct = round(blended_fill_pct, 1)
-        data_source = "blended"
-    elif has_cv:
-        fill_pct = round(cv_pct, 1)
-        data_source = "cv"
-    elif has_crowd:
-        fill_pct = round(crowd_pct, 1)
-        data_source = "crowd"
+        numerator += cv_pct * cv_weight_factor
+        denominator += cv_weight_factor
+        sources.append("cv")
+
+    if has_passive:
+        numerator += passive_pct * passive_weight
+        denominator += passive_weight
+        sources.append("passive")
+
+    if denominator > 0:
+        fill_pct = round(numerator / denominator, 1)
     else:
         fill_pct = 0.0
+
+    # Determine data_source label
+    if len(sources) == 0:
         data_source = "crowd"
+    elif len(sources) == 1:
+        data_source = sources[0]
+    elif "crowd" in sources and "cv" in sources:
+        data_source = "blended"
+    else:
+        data_source = "+".join(sources)
 
     # Determine status from fill_pct
-    if not has_crowd and not has_cv:
+    has_any_data = has_crowd or has_cv or has_passive
+    if not has_any_data:
         status = "unknown"
     elif fill_pct >= 70:
         status = "full"
@@ -172,6 +217,7 @@ def compute_lot_status(lot_id: str, db: Session) -> LotResponse:
         cv_confidence=cv_confidence,
         cv_source=cv_source,
         data_source=data_source,
+        active_sessions=active_sessions,
     )
 
 
@@ -374,3 +420,93 @@ def unregister_push_token(payload: PushTokenCreate, db: Session = Depends(get_db
     if deleted == 0:
         raise HTTPException(status_code=404, detail="Token not found")
     return {"status": "removed"}
+
+
+# --- Phase 2: Passive Occupancy Tracking Endpoints ---
+
+
+@app.post(
+    "/api/occupancy/enter",
+    response_model=OccupancySessionResponse,
+    status_code=201,
+)
+def occupancy_enter(event: OccupancyEvent, db: Session = Depends(get_db)):
+    """Record a device entering a parking lot via geofence."""
+    # Check if user already has an active session for this lot (idempotent)
+    existing = (
+        db.query(OccupancySessionDB)
+        .filter(
+            OccupancySessionDB.lot_id == event.lot_id,
+            OccupancySessionDB.user_id == event.user_id,
+            OccupancySessionDB.exited_at.is_(None),
+        )
+        .first()
+    )
+    if existing:
+        return existing
+
+    # Auto-exit any active session for a different lot
+    other_active = (
+        db.query(OccupancySessionDB)
+        .filter(
+            OccupancySessionDB.user_id == event.user_id,
+            OccupancySessionDB.exited_at.is_(None),
+        )
+        .first()
+    )
+    if other_active:
+        other_active.exited_at = datetime.now(timezone.utc)
+
+    # Create new session
+    session = OccupancySessionDB(
+        lot_id=event.lot_id,
+        user_id=event.user_id,
+        entered_at=datetime.now(timezone.utc),
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@app.post("/api/occupancy/exit", response_model=OccupancySessionResponse)
+def occupancy_exit(event: OccupancyEvent, db: Session = Depends(get_db)):
+    """Record a device leaving a parking lot via geofence."""
+    active = (
+        db.query(OccupancySessionDB)
+        .filter(
+            OccupancySessionDB.lot_id == event.lot_id,
+            OccupancySessionDB.user_id == event.user_id,
+            OccupancySessionDB.exited_at.is_(None),
+        )
+        .first()
+    )
+    if not active:
+        raise HTTPException(
+            status_code=404,
+            detail="No active session found for this user and lot",
+        )
+    active.exited_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(active)
+    return active
+
+
+@app.get("/api/occupancy/active")
+def occupancy_active(db: Session = Depends(get_db)):
+    """Get count of active occupancy sessions per lot."""
+    now = datetime.now(timezone.utc)
+    session_cutoff = now - timedelta(hours=4)
+    results = []
+    for lot_id in LOTS:
+        count = (
+            db.query(OccupancySessionDB)
+            .filter(
+                OccupancySessionDB.lot_id == lot_id,
+                OccupancySessionDB.exited_at.is_(None),
+                OccupancySessionDB.entered_at >= session_cutoff,
+            )
+            .count()
+        )
+        results.append({"lot_id": lot_id, "active_count": count})
+    return results

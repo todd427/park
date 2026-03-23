@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from unittest.mock import MagicMock, patch
 
-from backend.database import Base, CvEstimateDB, PushTokenDB, ReportDB, get_db
+from backend.database import Base, CvEstimateDB, OccupancySessionDB, PushTokenDB, ReportDB, get_db
 from backend.main import app
 
 # Use in-memory SQLite for tests
@@ -447,3 +447,151 @@ def test_status_transition_notification(client, db_session):
         assert call_args[0][0] == "https://exp.host/--/api/v2/push/send"
         messages = call_args[1]["json"] if "json" in call_args[1] else call_args[0][1]
         assert any("Staff / Overflow" in m["body"] for m in messages)
+
+
+# --- Phase 2: Passive Occupancy Tracking Tests ---
+
+
+# 22. POST /api/occupancy/enter creates session
+def test_occupancy_enter(client):
+    response = client.post(
+        "/api/occupancy/enter",
+        json={"lot_id": "A", "user_id": "user-geo-1"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["lot_id"] == "A"
+    assert data["user_id"] == "user-geo-1"
+    assert data["entered_at"] is not None
+    assert data["exited_at"] is None
+    assert "id" in data
+
+
+# 23. POST /api/occupancy/enter is idempotent (same lot)
+def test_occupancy_enter_idempotent(client, db_session):
+    client.post(
+        "/api/occupancy/enter",
+        json={"lot_id": "A", "user_id": "user-geo-2"},
+    )
+    client.post(
+        "/api/occupancy/enter",
+        json={"lot_id": "A", "user_id": "user-geo-2"},
+    )
+    # Should still only have 1 active session
+    count = (
+        db_session.query(OccupancySessionDB)
+        .filter(
+            OccupancySessionDB.lot_id == "A",
+            OccupancySessionDB.user_id == "user-geo-2",
+            OccupancySessionDB.exited_at.is_(None),
+        )
+        .count()
+    )
+    assert count == 1
+
+
+# 24. POST /api/occupancy/enter auto-exits previous lot
+def test_occupancy_enter_auto_exits_previous(client, db_session):
+    # Enter lot A
+    client.post(
+        "/api/occupancy/enter",
+        json={"lot_id": "A", "user_id": "user-geo-3"},
+    )
+    # Enter lot B — should auto-exit lot A
+    client.post(
+        "/api/occupancy/enter",
+        json={"lot_id": "B", "user_id": "user-geo-3"},
+    )
+    # Lot A session should now be exited
+    lot_a_session = (
+        db_session.query(OccupancySessionDB)
+        .filter(
+            OccupancySessionDB.lot_id == "A",
+            OccupancySessionDB.user_id == "user-geo-3",
+        )
+        .first()
+    )
+    assert lot_a_session is not None
+    assert lot_a_session.exited_at is not None
+
+    # Lot B session should be active
+    lot_b_session = (
+        db_session.query(OccupancySessionDB)
+        .filter(
+            OccupancySessionDB.lot_id == "B",
+            OccupancySessionDB.user_id == "user-geo-3",
+            OccupancySessionDB.exited_at.is_(None),
+        )
+        .first()
+    )
+    assert lot_b_session is not None
+
+
+# 25. POST /api/occupancy/exit closes session
+def test_occupancy_exit(client):
+    # Enter then exit
+    client.post(
+        "/api/occupancy/enter",
+        json={"lot_id": "A", "user_id": "user-geo-4"},
+    )
+    response = client.post(
+        "/api/occupancy/exit",
+        json={"lot_id": "A", "user_id": "user-geo-4"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["exited_at"] is not None
+
+    # Verify active count is 0
+    active_resp = client.get("/api/occupancy/active")
+    active_data = active_resp.json()
+    lot_a = next(x for x in active_data if x["lot_id"] == "A")
+    assert lot_a["active_count"] == 0
+
+
+# 26. Active sessions contribute to lot status
+def test_occupancy_affects_status(client, db_session):
+    now = datetime.now(timezone.utc)
+    # Insert 40 active sessions for lot C (capacity=45) directly in DB
+    for i in range(40):
+        db_session.add(
+            OccupancySessionDB(
+                lot_id="C",
+                user_id=f"user-occ-{i}",
+                entered_at=now - timedelta(minutes=10),
+                exited_at=None,
+            )
+        )
+    db_session.commit()
+
+    response = client.get("/api/lots/C")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["active_sessions"] == 40
+    assert data["status"] != "unknown"
+    # 40/45 capacity = ~88.9% -> should be full
+    assert data["fill_pct"] >= 70
+    assert data["status"] == "full"
+    assert "passive" in data["data_source"]
+
+
+# 27. Stale sessions (>4h) are ignored
+def test_occupancy_stale_session_ignored(client, db_session):
+    # Insert a session with entered_at 5 hours ago, still active (no exit)
+    stale_time = datetime.now(timezone.utc) - timedelta(hours=5)
+    db_session.add(
+        OccupancySessionDB(
+            lot_id="D",
+            user_id="user-stale-1",
+            entered_at=stale_time,
+            exited_at=None,
+        )
+    )
+    db_session.commit()
+
+    response = client.get("/api/lots/D")
+    assert response.status_code == 200
+    data = response.json()
+    # Stale session should NOT be counted
+    assert data["active_sessions"] == 0
+    assert data["status"] == "unknown"

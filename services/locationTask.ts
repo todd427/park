@@ -2,6 +2,8 @@
  * Background location task — lorg pattern.
  * TaskManager.defineTask MUST be called at module scope, not inside a component.
  * This file is imported in index.ts (app entry) to ensure registration.
+ *
+ * Tracks enter AND exit events for passive occupancy counting.
  */
 
 import * as TaskManager from 'expo-task-manager';
@@ -12,7 +14,13 @@ import { emitGeofenceEntry } from './geofenceEvents';
 
 export const GEOFENCE_TASK = 'park-geofence';
 const GEOFENCE_RADIUS_M = 80;
-const VISITED_KEY = 'park_visited_lots';
+const ACTIVE_LOT_KEY = 'park_active_lot'; // lot ID the user is currently in (or null)
+const USER_ID_KEY = 'park_user_id';
+const PROMPTED_KEY = 'park_prompted_lots'; // lots already prompted this session
+
+const API_BASE = __DEV__
+  ? 'http://10.0.2.2:8000'
+  : 'https://park-api.fly.dev';
 
 function haversineDistance(
   lat1: number,
@@ -30,7 +38,24 @@ function haversineDistance(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Register background task at module scope — this runs even when app is backgrounded
+/** POST enter/exit events to backend (best-effort, silent) */
+async function postOccupancyEvent(
+  event: 'enter' | 'exit',
+  lotId: string,
+  userId: string,
+): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/api/occupancy/${event}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lot_id: lotId, user_id: userId }),
+    });
+  } catch {
+    // Best effort — will correct on next position update
+  }
+}
+
+// Register background task at module scope
 TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (error) {
     console.warn('Park geofence task error:', error.message);
@@ -41,11 +66,11 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (!locations?.length) return;
 
   const { latitude, longitude } = locations[0].coords;
+  const userId = await AsyncStorage.getItem(USER_ID_KEY);
+  if (!userId) return; // Not yet registered
 
-  // Load visited set from AsyncStorage (persists across background wakes)
-  const raw = await AsyncStorage.getItem(VISITED_KEY);
-  const visited: Set<string> = new Set(raw ? JSON.parse(raw) : []);
-
+  // Determine which lot (if any) the user is currently inside
+  let currentLotId: string | null = null;
   for (const lot of MOCK_LOTS) {
     const dist = haversineDistance(
       latitude,
@@ -53,39 +78,59 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
       lot.centroid.latitude,
       lot.centroid.longitude,
     );
-
-    if (dist <= GEOFENCE_RADIUS_M && !visited.has(lot.id)) {
-      visited.add(lot.id);
-      await AsyncStorage.setItem(VISITED_KEY, JSON.stringify([...visited]));
-      // Emit to any foreground listeners (opens ReportModal if app is active)
-      emitGeofenceEntry(lot.id);
+    if (dist <= GEOFENCE_RADIUS_M) {
+      currentLotId = lot.id;
+      break;
     }
   }
+
+  // Load previous active lot
+  const previousLotId = await AsyncStorage.getItem(ACTIVE_LOT_KEY);
+
+  // Handle transitions
+  if (currentLotId && currentLotId !== previousLotId) {
+    // Entered a new lot
+    if (previousLotId) {
+      // Exit the previous lot first
+      await postOccupancyEvent('exit', previousLotId, userId);
+    }
+    await postOccupancyEvent('enter', currentLotId, userId);
+    await AsyncStorage.setItem(ACTIVE_LOT_KEY, currentLotId);
+
+    // Emit entry event for ReportModal prompt (once per lot per session)
+    const promptedRaw = await AsyncStorage.getItem(PROMPTED_KEY);
+    const prompted: Set<string> = new Set(promptedRaw ? JSON.parse(promptedRaw) : []);
+    if (!prompted.has(currentLotId)) {
+      prompted.add(currentLotId);
+      await AsyncStorage.setItem(PROMPTED_KEY, JSON.stringify([...prompted]));
+      emitGeofenceEntry(currentLotId);
+    }
+  } else if (!currentLotId && previousLotId) {
+    // Exited all lots
+    await postOccupancyEvent('exit', previousLotId, userId);
+    await AsyncStorage.removeItem(ACTIVE_LOT_KEY);
+  }
+  // If currentLotId === previousLotId, no change — do nothing
 });
 
 /** Start background location tracking with foreground service (Android) */
 export async function startGeofenceTracking(): Promise<boolean> {
-  // Check if already running
   const started = await Location.hasStartedLocationUpdatesAsync(GEOFENCE_TASK);
   if (started) return true;
 
-  // Request foreground first, then background
   const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
   if (fgStatus !== 'granted') return false;
 
   const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-  if (bgStatus !== 'granted') {
-    // Fall back to foreground-only (Phase 0 behaviour still works)
-    return false;
-  }
+  if (bgStatus !== 'granted') return false;
 
   await Location.startLocationUpdatesAsync(GEOFENCE_TASK, {
     accuracy: Location.Accuracy.Balanced,
-    timeInterval: 60_000,    // Check every 60s
-    distanceInterval: 30,    // Or every 30m of movement
+    timeInterval: 60_000,
+    distanceInterval: 30,
     foregroundService: {
       notificationTitle: 'Park',
-      notificationBody: 'Detecting nearby car parks',
+      notificationBody: 'Tracking parking availability',
       notificationColor: '#003087',
     },
     pausesUpdatesAutomatically: true,
@@ -103,7 +148,7 @@ export async function stopGeofenceTracking(): Promise<void> {
   }
 }
 
-/** Reset visited lots (e.g. new session / new day) */
-export async function resetVisitedLots(): Promise<void> {
-  await AsyncStorage.removeItem(VISITED_KEY);
+/** Reset session state (e.g. new day) */
+export async function resetGeofenceState(): Promise<void> {
+  await AsyncStorage.multiRemove([ACTIVE_LOT_KEY, PROMPTED_KEY]);
 }

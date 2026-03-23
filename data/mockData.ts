@@ -56,6 +56,7 @@ export const MOCK_LOTS: Lot[] = [
     cvConfidence: 0.87,
     cvSource: 'drone',
     dataSource: 'blended',
+    activeSessions: 12,
   },
   {
     id: 'B',
@@ -85,6 +86,7 @@ export const MOCK_LOTS: Lot[] = [
     cvConfidence: null,
     cvSource: null,
     dataSource: 'crowd',
+    activeSessions: 0,
   },
   {
     id: 'C',
@@ -107,6 +109,7 @@ export const MOCK_LOTS: Lot[] = [
     cvConfidence: 0.93,
     cvSource: 'camera',
     dataSource: 'cv',
+    activeSessions: 5,
   },
   {
     id: 'D',
@@ -129,6 +132,7 @@ export const MOCK_LOTS: Lot[] = [
     cvConfidence: null,
     cvSource: null,
     dataSource: 'crowd',
+    activeSessions: 0,
   },
 ];
 

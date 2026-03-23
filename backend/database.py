@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -67,6 +68,23 @@ class CvEstimateDB(Base):
 
     __table_args__ = (
         Index("idx_cv_estimates_lot_timestamp", "lot_id", "timestamp"),
+    )
+
+
+class OccupancySessionDB(Base):
+    __tablename__ = "occupancy_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lot_id = Column(Text, nullable=False)
+    user_id = Column(Text, nullable=False)
+    entered_at = Column(DateTime, nullable=False, server_default=func.now())
+    exited_at = Column(DateTime, nullable=True)  # NULL = still in lot
+
+    __table_args__ = (
+        Index("idx_occupancy_lot_exited", "lot_id", "exited_at"),
+        UniqueConstraint(
+            "lot_id", "user_id", "exited_at", name="uq_occupancy_active_session"
+        ),
     )
 
 

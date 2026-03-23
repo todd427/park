@@ -18,6 +18,7 @@ interface ApiLot {
   cv_confidence: number | null;
   cv_source: string | null;
   data_source: string;
+  active_sessions: number;
 }
 
 /** Map API response to frontend Lot type, preserving coordinates from mock data */
@@ -36,6 +37,7 @@ function mapApiLot(apiLot: ApiLot): Lot {
     cvConfidence: apiLot.cv_confidence,
     cvSource: apiLot.cv_source,
     dataSource: (apiLot.data_source ?? 'crowd') as DataSource,
+    activeSessions: apiLot.active_sessions ?? 0,
   };
 }
 

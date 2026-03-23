@@ -1,7 +1,7 @@
 import { type ParkingStatus } from '../constants/theme';
 import { type LatLng } from 'react-native-maps';
 
-export type DataSource = 'crowd' | 'cv' | 'blended';
+export type DataSource = 'crowd' | 'cv' | 'blended' | 'passive';
 
 export interface Lot {
   id: string;
@@ -16,4 +16,5 @@ export interface Lot {
   cvConfidence: number | null;
   cvSource: string | null;
   dataSource: DataSource;
+  activeSessions: number;
 }

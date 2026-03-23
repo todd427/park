@@ -50,6 +50,12 @@ export function LotCard({ lot, onReport }: LotCardProps) {
             {lot.reportCount} report{lot.reportCount !== 1 ? 's' : ''} in last
             90 min
           </Text>
+          {lot.activeSessions > 0 && (
+            <Text style={styles.cvMeta}>
+              {lot.activeSessions} device{lot.activeSessions !== 1 ? 's' : ''} here
+              now
+            </Text>
+          )}
           {lot.cvOccupancy != null && (
             <Text style={styles.cvMeta}>
               CV: {lot.cvOccupancy.toFixed(0)}% occupied

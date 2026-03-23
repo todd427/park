@@ -105,11 +105,17 @@ Polygons and centroids in `data/lots.ts`.
 
 **CV decay:** 30-minute window.
 
-**Blending:**
+**Passive occupancy:** Geofence enter/exit events tracked per device.
+- Sessions auto-expire after 4 hours (stale device protection)
+- `passive_pct = (active_sessions / capacity) * 100`
+- `passive_weight = min(active_sessions, 10) / 10.0`
+
+**Blending (all sources):**
 - `cv_weight = confidence * 2.0`
 - `crowd_weight = min(report_count, 5) / 5.0`
-- Weighted blend when both present; falls back to either alone
-- `data_source`: `"crowd"` | `"cv"` | `"blended"`
+- `passive_weight = min(active_sessions, 10) / 10.0`
+- Weighted blend of all available sources
+- `data_source`: `"crowd"` | `"cv"` | `"passive"` | `"blended"`
 
 **Status thresholds:**
 | Weighted % Full | Status |
@@ -132,12 +138,15 @@ Polygons and centroids in `data/lots.ts`.
 | `POST` | `/api/cv/estimate` | `X-API-Key` | Ingest CV occupancy estimate |
 | `GET` | `/api/cv/latest` | none | Latest CV estimate per lot (30min window) |
 | `GET` | `/api/cv/latest/{lot_id}` | none | Single lot CV data |
+| `POST` | `/api/occupancy/enter` | none | Device entered a lot (passive) |
+| `POST` | `/api/occupancy/exit` | none | Device left a lot (passive) |
+| `GET` | `/api/occupancy/active` | none | Active session counts per lot |
 
 **Env vars:** `DATABASE_URL`, `CV_API_KEY` (set via Fly secrets)
 
 ---
 
-## Tests — 17 passing
+## Tests — 27 passing
 
 `backend/tests/test_api.py`
 
@@ -182,7 +191,7 @@ Polygons and centroids in `data/lots.ts`.
 7. `services/api.ts` with `__DEV__` switching and mock fallback
 8. `data/lots.ts` with lot polygons
 9. FastAPI backend — all endpoints + decay + blending
-10. 17 pytest tests — all must pass
+10. 27 pytest tests — all must pass
 11. **After each phase: `git add -A && git commit -m "phaseN: ..." && git push`**
 
 **Do not use Expo Go for final testing — use a dev build.**
