@@ -22,6 +22,11 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "config": {
+        "googleMaps": {
+          "apiKey": "REDACTED_GOOGLE_MAPS_KEY"
+        }
+      },
       "package": "com.todd427.park",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
