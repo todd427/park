@@ -1,0 +1,14 @@
+# Backend — not part of the Expo app
+backend/
+Dockerfile
+fly.toml
+
+# Dev artifacts
+__pycache__/
+*.pyc
+*.db
+.pytest_cache/
+reports.db
+
+# Git
+.git/
