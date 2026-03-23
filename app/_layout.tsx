@@ -1,4 +1,5 @@
 import React from 'react';
+import { Text } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Colors } from '../constants/theme';
 
@@ -32,22 +33,32 @@ export default function Layout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="about"
+        options={{
+          title: 'About',
+          tabBarIcon: ({ color }) => (
+            <TabIcon name="about" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="onboarding"
+        options={{
+          href: null,
+          headerShown: false,
+        }}
+      />
     </Tabs>
   );
 }
 
 // Minimal text-based icons to avoid extra deps
 function TabIcon({ name, color }: { name: string; color: string }) {
-  const icons: Record<string, string> = { map: '🗺', list: '📋' };
-  return (
-    <React.Fragment>
-      {/* Using Text from react-native */}
-      <_TabText color={color}>{icons[name] ?? '?'}</_TabText>
-    </React.Fragment>
-  );
+  const icons: Record<string, string> = { map: '🗺', list: '📋', about: 'ℹ️' };
+  return <_TabText color={color}>{icons[name] ?? '?'}</_TabText>;
 }
 
-import { Text } from 'react-native';
 function _TabText({ color, children }: { color: string; children: React.ReactNode }) {
   return <Text style={{ fontSize: 20, color }}>{children}</Text>;
 }

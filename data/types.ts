@@ -17,4 +17,5 @@ export interface Lot {
   cvSource: string | null;
   dataSource: DataSource;
   activeSessions: number;
+  lastUpdated: string | null;
 }

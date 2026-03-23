@@ -28,6 +28,8 @@ export default function ListScreen() {
 
   useEffect(() => {
     loadLots();
+    const interval = setInterval(loadLots, 60_000);
+    return () => clearInterval(interval);
   }, [loadLots]);
 
   const onRefresh = useCallback(async () => {

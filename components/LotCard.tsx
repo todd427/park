@@ -11,11 +11,23 @@ interface LotCardProps {
 const SOURCE_LABELS: Record<string, string> = {
   crowd: 'Crowd',
   cv: 'CV',
+  passive: 'Live',
   blended: 'Blended',
 };
 
+function timeAgo(isoString: string | null): string | null {
+  if (!isoString) return null;
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ago`;
+}
+
 export function LotCard({ lot, onReport }: LotCardProps) {
   const statusColor = StatusColors[lot.status];
+  const updated = timeAgo(lot.lastUpdated);
 
   return (
     <View style={styles.card}>
@@ -39,29 +51,34 @@ export function LotCard({ lot, onReport }: LotCardProps) {
         <View
           style={[
             styles.barFill,
-            { width: `${lot.fillPct}%`, backgroundColor: statusColor },
+            { width: `${Math.min(lot.fillPct, 100)}%`, backgroundColor: statusColor },
           ]}
         />
       </View>
 
-      <View style={styles.footer}>
-        <View>
-          <Text style={styles.meta}>
-            {lot.reportCount} report{lot.reportCount !== 1 ? 's' : ''} in last
-            90 min
+      {/* Live presence row */}
+      {lot.activeSessions > 0 && (
+        <View style={styles.liveRow}>
+          <View style={styles.liveDot} />
+          <Text style={styles.liveText}>
+            {lot.activeSessions} device{lot.activeSessions !== 1 ? 's' : ''} here now
           </Text>
-          {lot.activeSessions > 0 && (
-            <Text style={styles.cvMeta}>
-              {lot.activeSessions} device{lot.activeSessions !== 1 ? 's' : ''} here
-              now
-            </Text>
+        </View>
+      )}
+
+      <View style={styles.footer}>
+        <View style={styles.metaCol}>
+          <Text style={styles.meta}>
+            {lot.reportCount} report{lot.reportCount !== 1 ? 's' : ''} in last 90 min
+          </Text>
+          {updated && (
+            <Text style={styles.timestamp}>Updated {updated}</Text>
           )}
           {lot.cvOccupancy != null && (
             <Text style={styles.cvMeta}>
               CV: {lot.cvOccupancy.toFixed(0)}% occupied
               {lot.cvConfidence != null &&
                 ` (${(lot.cvConfidence * 100).toFixed(0)}% conf)`}
-              {lot.cvSource ? ` — ${lot.cvSource}` : ''}
             </Text>
           )}
         </View>
@@ -134,14 +151,43 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 4,
   },
+  liveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+    backgroundColor: Colors.BG_DARK,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.STATUS_AVAILABLE,
+  },
+  liveText: {
+    color: Colors.STATUS_AVAILABLE,
+    fontSize: 13,
+    fontWeight: '600',
+  },
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
   },
+  metaCol: {
+    flex: 1,
+  },
   meta: {
     color: Colors.TEXT_SECONDARY,
     fontSize: 13,
+  },
+  timestamp: {
+    color: Colors.TEXT_SECONDARY,
+    fontSize: 11,
+    marginTop: 2,
   },
   cvMeta: {
     color: Colors.ATU_GOLD,

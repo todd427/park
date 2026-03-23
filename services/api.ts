@@ -38,6 +38,7 @@ function mapApiLot(apiLot: ApiLot): Lot {
     cvSource: apiLot.cv_source,
     dataSource: (apiLot.data_source ?? 'crowd') as DataSource,
     activeSessions: apiLot.active_sessions ?? 0,
+    lastUpdated: apiLot.last_updated,
   };
 }
 

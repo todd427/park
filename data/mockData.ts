@@ -57,6 +57,7 @@ export const MOCK_LOTS: Lot[] = [
     cvSource: 'drone',
     dataSource: 'blended',
     activeSessions: 12,
+    lastUpdated: new Date(Date.now() - 3 * 60000).toISOString(),
   },
   {
     id: 'B',
@@ -87,6 +88,7 @@ export const MOCK_LOTS: Lot[] = [
     cvSource: null,
     dataSource: 'crowd',
     activeSessions: 0,
+    lastUpdated: null,
   },
   {
     id: 'C',
@@ -110,6 +112,7 @@ export const MOCK_LOTS: Lot[] = [
     cvSource: 'camera',
     dataSource: 'cv',
     activeSessions: 5,
+    lastUpdated: new Date(Date.now() - 8 * 60000).toISOString(),
   },
   {
     id: 'D',
@@ -133,6 +136,7 @@ export const MOCK_LOTS: Lot[] = [
     cvSource: null,
     dataSource: 'crowd',
     activeSessions: 0,
+    lastUpdated: null,
   },
 ];
 
