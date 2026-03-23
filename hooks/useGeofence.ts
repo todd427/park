@@ -39,42 +39,45 @@ export function useGeofence(onEnterLot: (lotId: string) => void) {
     let subscription: Location.LocationSubscription | null = null;
 
     (async () => {
-      // Try to start background tracking first (lorg pattern)
-      const bgStarted = await startGeofenceTracking();
-      setBackgroundEnabled(bgStarted);
+      try {
+        // Try to start background tracking first (lorg pattern)
+        const bgStarted = await startGeofenceTracking();
+        setBackgroundEnabled(bgStarted);
 
-      if (bgStarted) {
-        // Background task handles everything — no foreground watcher needed
+        if (bgStarted) {
+          setHasPermission(true);
+          return;
+        }
+
+        // Fallback: foreground-only location watching
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
         setHasPermission(true);
-        return;
-      }
 
-      // Fallback: foreground-only location watching (Phase 0 behaviour)
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') return;
-      setHasPermission(true);
-
-      subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          distanceInterval: 20,
-        },
-        (location) => {
-          const { latitude, longitude } = location.coords;
-          for (const lot of MOCK_LOTS) {
-            const dist = haversineDistance(
-              latitude,
-              longitude,
-              lot.centroid.latitude,
-              lot.centroid.longitude,
-            );
-            if (dist <= GEOFENCE_RADIUS_M && !visitedRef.current.has(lot.id)) {
-              visitedRef.current.add(lot.id);
-              onEnterLot(lot.id);
+        subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            distanceInterval: 20,
+          },
+          (location) => {
+            const { latitude, longitude } = location.coords;
+            for (const lot of MOCK_LOTS) {
+              const dist = haversineDistance(
+                latitude,
+                longitude,
+                lot.centroid.latitude,
+                lot.centroid.longitude,
+              );
+              if (dist <= GEOFENCE_RADIUS_M && !visitedRef.current.has(lot.id)) {
+                visitedRef.current.add(lot.id);
+                onEnterLot(lot.id);
+              }
             }
-          }
-        },
-      );
+          },
+        );
+      } catch (e) {
+        console.warn('Geofence init failed:', e);
+      }
     })();
 
     return () => {

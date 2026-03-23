@@ -71,7 +71,6 @@ export default function MapScreen() {
       )}
       <MapView
         style={styles.map}
-        mapType="hybrid"
         initialRegion={CAMPUS_CENTER}
       >
         {lots.map((lot) => (
