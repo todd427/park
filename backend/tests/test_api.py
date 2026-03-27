@@ -1,5 +1,6 @@
-"""11 required pytest tests for Park backend API."""
+"""11 required pytest tests for Park backend API + extended tests."""
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -10,8 +11,8 @@ from sqlalchemy.pool import StaticPool
 
 from unittest.mock import MagicMock, patch
 
-from backend.database import Base, CvEstimateDB, OccupancySessionDB, PushTokenDB, ReportDB, get_db
-from backend.main import app
+from backend.database import Base, CvEstimateDB, LotDB, OccupancySessionDB, PushTokenDB, ReportDB, get_db
+from backend.main import SEED_LOTS, app
 
 # Use in-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite://"
@@ -24,10 +25,30 @@ engine = create_engine(
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def _seed_test_lots(db):
+    """Insert the 4 original lots into the test database."""
+    for lot_data in SEED_LOTS:
+        existing = db.query(LotDB).filter(LotDB.id == lot_data["id"]).first()
+        if existing is None:
+            db_lot = LotDB(
+                id=lot_data["id"],
+                name=lot_data["name"],
+                capacity=lot_data["capacity"],
+                coordinates=json.dumps(lot_data["coordinates"]),
+                centroid_lat=lot_data["centroid_lat"],
+                centroid_lng=lot_data["centroid_lng"],
+            )
+            db.add(db_lot)
+    db.commit()
+
+
 @pytest.fixture(autouse=True)
 def setup_database():
-    """Create fresh tables for each test, drop after."""
+    """Create fresh tables for each test, seed lots, drop after."""
     Base.metadata.create_all(bind=engine)
+    db = TestingSessionLocal()
+    _seed_test_lots(db)
+    db.close()
     yield
     Base.metadata.drop_all(bind=engine)
 
@@ -117,13 +138,13 @@ def test_post_report_full(client):
     assert data["report_type"] == "full"
 
 
-# 7. POST /api/reports with invalid lot_id returns 422
+# 7. POST /api/reports with invalid lot_id returns 404 (lot not in DB)
 def test_post_report_invalid_lot(client):
     response = client.post(
         "/api/reports",
         json={"lot_id": "Z", "report_type": "found", "user_id": "user-123"},
     )
-    assert response.status_code == 422
+    assert response.status_code == 404
 
 
 # 8. POST /api/reports with invalid report_type returns 422
@@ -260,7 +281,7 @@ def test_post_cv_estimate_no_auth(client):
     assert response.status_code == 403
 
 
-# 14. POST /api/cv/estimate with invalid lot returns 422
+# 14. POST /api/cv/estimate with invalid lot returns 404 (lot not in DB)
 def test_post_cv_estimate_invalid_lot(client):
     response = client.post(
         "/api/cv/estimate",
@@ -273,7 +294,7 @@ def test_post_cv_estimate_invalid_lot(client):
         },
         headers={"X-API-Key": "park-cv-dev-key"},
     )
-    assert response.status_code == 422
+    assert response.status_code == 404
 
 
 # 15. GET /api/cv/latest returns estimates
@@ -595,3 +616,105 @@ def test_occupancy_stale_session_ignored(client, db_session):
     # Stale session should NOT be counted
     assert data["active_sessions"] == 0
     assert data["status"] == "unknown"
+
+
+# --- Lot Definition CRUD Tests ---
+
+
+# 28. GET /api/lots/definitions returns all lots with coordinates
+def test_get_lot_definitions(client):
+    response = client.get("/api/lots/definitions")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 4
+    lot_ids = {lot["id"] for lot in data}
+    assert lot_ids == {"A", "B", "C", "D"}
+    # Each lot should have coordinates array
+    for lot in data:
+        assert "coordinates" in lot
+        assert len(lot["coordinates"]) >= 3
+        assert "centroid" in lot
+        assert "lat" in lot["centroid"]
+        assert "lng" in lot["centroid"]
+        assert "created_at" in lot
+        assert "updated_at" in lot
+
+
+# 29. POST /api/lots/definitions creates a new lot
+def test_create_lot(client):
+    response = client.post(
+        "/api/lots/definitions",
+        json={
+            "id": "E",
+            "name": "New Visitor Lot",
+            "capacity": 30,
+            "coordinates": [
+                {"lat": 54.9510, "lng": -7.7230},
+                {"lat": 54.9512, "lng": -7.7228},
+                {"lat": 54.9511, "lng": -7.7225},
+                {"lat": 54.9509, "lng": -7.7227},
+            ],
+        },
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["id"] == "E"
+    assert data["name"] == "New Visitor Lot"
+    assert data["capacity"] == 30
+    assert len(data["coordinates"]) == 4
+    assert "centroid" in data
+    # Verify it shows up in definitions list
+    defs = client.get("/api/lots/definitions").json()
+    assert len(defs) == 5
+
+
+# 30. PUT /api/lots/definitions/{lot_id} updates a lot
+def test_update_lot(client):
+    response = client.put(
+        "/api/lots/definitions/A",
+        json={"capacity": 150},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "A"
+    assert data["capacity"] == 150
+    assert data["name"] == "Main Car Park"  # unchanged
+
+
+# 31. DELETE /api/lots/definitions/{lot_id} removes a lot
+def test_delete_lot(client):
+    response = client.delete("/api/lots/definitions/D")
+    assert response.status_code == 200
+    # Verify it's gone
+    defs = client.get("/api/lots/definitions").json()
+    assert len(defs) == 3
+    lot_ids = {lot["id"] for lot in defs}
+    assert "D" not in lot_ids
+
+
+# 32. POST /api/reports with new lot_id works after creating lot
+def test_report_on_new_lot(client):
+    # Create lot E
+    client.post(
+        "/api/lots/definitions",
+        json={
+            "id": "E",
+            "name": "New Visitor Lot",
+            "capacity": 30,
+            "coordinates": [
+                {"lat": 54.9510, "lng": -7.7230},
+                {"lat": 54.9512, "lng": -7.7228},
+                {"lat": 54.9511, "lng": -7.7225},
+                {"lat": 54.9509, "lng": -7.7227},
+            ],
+        },
+    )
+    # Now submit a report for lot E
+    response = client.post(
+        "/api/reports",
+        json={"lot_id": "E", "report_type": "found", "user_id": "user-new-lot"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["lot_id"] == "E"
+    assert data["report_type"] == "found"

@@ -1,5 +1,6 @@
 """FastAPI application for Park — ATU Letterkenny Parking Availability."""
 
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from backend.database import (
     CvEstimateDB,
+    LotDB,
     OccupancySessionDB,
     PushTokenDB,
     ReportDB,
@@ -19,8 +21,12 @@ from backend.database import (
     get_db,
 )
 from backend.models import (
+    Coordinate,
     CvEstimateCreate,
     CvEstimateResponse,
+    LotDefinition,
+    LotDefinitionResponse,
+    LotDefinitionUpdate,
     LotResponse,
     OccupancyEvent,
     OccupancySessionResponse,
@@ -45,18 +51,148 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Lot definitions
-LOTS = {
-    "A": {"id": "A", "name": "Main Car Park", "capacity": 120},
-    "B": {"id": "B", "name": "Sports Centre", "capacity": 60},
-    "C": {"id": "C", "name": "West Block", "capacity": 45},
-    "D": {"id": "D", "name": "Staff / Overflow", "capacity": 80},
-}
+# Seed data — the 4 original ATU Letterkenny campus lots with real coordinates
+SEED_LOTS = [
+    {
+        "id": "A",
+        "name": "Main Car Park",
+        "capacity": 120,
+        "coordinates": [
+            {"lat": 54.9533446, "lng": -7.7262454},
+            {"lat": 54.9533684, "lng": -7.7263687},
+            {"lat": 54.9534161, "lng": -7.7263905},
+            {"lat": 54.9534866, "lng": -7.7259307},
+            {"lat": 54.9534268, "lng": -7.7258997},
+            {"lat": 54.9533707, "lng": -7.7255703},
+            {"lat": 54.9534029, "lng": -7.7255391},
+            {"lat": 54.9534156, "lng": -7.7254401},
+            {"lat": 54.9534453, "lng": -7.7254185},
+            {"lat": 54.9535036, "lng": -7.7250370},
+            {"lat": 54.9534934, "lng": -7.7250133},
+            {"lat": 54.9535206, "lng": -7.7248571},
+            {"lat": 54.9534484, "lng": -7.7243465},
+            {"lat": 54.9534934, "lng": -7.7243298},
+            {"lat": 54.9533643, "lng": -7.7233960},
+            {"lat": 54.9533288, "lng": -7.7234133},
+            {"lat": 54.9533239, "lng": -7.7233834},
+            {"lat": 54.9534740, "lng": -7.7232675},
+            {"lat": 54.9534859, "lng": -7.7233384},
+            {"lat": 54.9535903, "lng": -7.7232973},
+            {"lat": 54.9535793, "lng": -7.7232145},
+            {"lat": 54.9536426, "lng": -7.7231939},
+            {"lat": 54.9535950, "lng": -7.7228464},
+            {"lat": 54.9534941, "lng": -7.7226934},
+            {"lat": 54.9534033, "lng": -7.7228563},
+            {"lat": 54.9529763, "lng": -7.7231756},
+            {"lat": 54.9525841, "lng": -7.7236607},
+            {"lat": 54.9526087, "lng": -7.7237360},
+            {"lat": 54.9526354, "lng": -7.7237626},
+            {"lat": 54.9526586, "lng": -7.7238220},
+            {"lat": 54.9527131, "lng": -7.7240045},
+            {"lat": 54.9527743, "lng": -7.7242231},
+            {"lat": 54.9528396, "lng": -7.7244508},
+            {"lat": 54.9529051, "lng": -7.7246765},
+            {"lat": 54.9529818, "lng": -7.7249296},
+            {"lat": 54.9530432, "lng": -7.7251544},
+            {"lat": 54.9531095, "lng": -7.7253794},
+            {"lat": 54.9531735, "lng": -7.7256103},
+            {"lat": 54.9532412, "lng": -7.7258702},
+            {"lat": 54.9533446, "lng": -7.7262454},
+        ],
+        "centroid_lat": 54.95325,
+        "centroid_lng": -7.7245,
+    },
+    {
+        "id": "B",
+        "name": "Sports Centre",
+        "capacity": 60,
+        "coordinates": [
+            {"lat": 54.9545995, "lng": -7.7254408},
+            {"lat": 54.9546000, "lng": -7.7261283},
+            {"lat": 54.9545768, "lng": -7.7262689},
+            {"lat": 54.9541719, "lng": -7.7260364},
+            {"lat": 54.9542047, "lng": -7.7257914},
+            {"lat": 54.9542202, "lng": -7.7255982},
+            {"lat": 54.9542250, "lng": -7.7254315},
+            {"lat": 54.9542060, "lng": -7.7250758},
+            {"lat": 54.9542086, "lng": -7.7250277},
+            {"lat": 54.9541404, "lng": -7.7242783},
+            {"lat": 54.9544836, "lng": -7.7241204},
+            {"lat": 54.9545298, "lng": -7.7244163},
+            {"lat": 54.9545968, "lng": -7.7251055},
+            {"lat": 54.9545995, "lng": -7.7254408},
+        ],
+        "centroid_lat": 54.954383,
+        "centroid_lng": -7.725297,
+    },
+    {
+        "id": "C",
+        "name": "West Block",
+        "capacity": 45,
+        "coordinates": [
+            {"lat": 54.9506128, "lng": -7.7225746},
+            {"lat": 54.9504104, "lng": -7.7230268},
+            {"lat": 54.9501751, "lng": -7.7235523},
+            {"lat": 54.9494837, "lng": -7.7226158},
+            {"lat": 54.9500551, "lng": -7.7217539},
+            {"lat": 54.9502898, "lng": -7.7220939},
+            {"lat": 54.9506128, "lng": -7.7225746},
+        ],
+        "centroid_lat": 54.950234,
+        "centroid_lng": -7.722599,
+    },
+    {
+        "id": "D",
+        "name": "Staff / Overflow",
+        "capacity": 80,
+        "coordinates": [
+            {"lat": 54.9512653, "lng": -7.7218068},
+            {"lat": 54.9514396, "lng": -7.7223762},
+            {"lat": 54.9522062, "lng": -7.7216647},
+            {"lat": 54.9520895, "lng": -7.7212834},
+            {"lat": 54.9519746, "lng": -7.7213901},
+            {"lat": 54.9519170, "lng": -7.7212019},
+            {"lat": 54.9512653, "lng": -7.7218068},
+        ],
+        "centroid_lat": 54.951737,
+        "centroid_lng": -7.721647,
+    },
+]
+
+
+def compute_centroid(coordinates: list[dict]) -> tuple[float, float]:
+    """Compute centroid from a list of coordinate dicts with 'lat' and 'lng' keys."""
+    n = len(coordinates)
+    avg_lat = sum(c["lat"] for c in coordinates) / n
+    avg_lng = sum(c["lng"] for c in coordinates) / n
+    return round(avg_lat, 6), round(avg_lng, 6)
+
+
+def seed_lots(db: Session):
+    """Insert the 4 original lots if they don't already exist."""
+    for lot_data in SEED_LOTS:
+        existing = db.query(LotDB).filter(LotDB.id == lot_data["id"]).first()
+        if existing is None:
+            db_lot = LotDB(
+                id=lot_data["id"],
+                name=lot_data["name"],
+                capacity=lot_data["capacity"],
+                coordinates=json.dumps(lot_data["coordinates"]),
+                centroid_lat=lot_data["centroid_lat"],
+                centroid_lng=lot_data["centroid_lng"],
+            )
+            db.add(db_lot)
+    db.commit()
 
 
 @app.on_event("startup")
 def on_startup():
     create_tables()
+    db = next(get_db())
+    try:
+        seed_lots(db)
+    finally:
+        db.close()
 
 
 def verify_cv_api_key(request: Request):
@@ -64,6 +200,27 @@ def verify_cv_api_key(request: Request):
     key = request.headers.get("X-API-Key")
     if key != CV_API_KEY:
         raise HTTPException(status_code=403, detail="Invalid API key")
+
+
+def get_lot_info(lot_id: str, db: Session) -> dict:
+    """Query LotDB and return lot dict (id, name, capacity, coordinates, centroid) or raise 404."""
+    lot = db.query(LotDB).filter(LotDB.id == lot_id).first()
+    if lot is None:
+        raise HTTPException(status_code=404, detail=f"Lot '{lot_id}' not found")
+    return {
+        "id": lot.id,
+        "name": lot.name,
+        "capacity": lot.capacity,
+        "coordinates": json.loads(lot.coordinates),
+        "centroid_lat": lot.centroid_lat,
+        "centroid_lng": lot.centroid_lng,
+    }
+
+
+def get_all_lot_ids(db: Session) -> list[str]:
+    """Return all lot IDs from the DB."""
+    rows = db.query(LotDB.id).all()
+    return [row[0] for row in rows]
 
 
 def get_latest_cv_estimate(lot_id: str, db: Session) -> CvEstimateDB | None:
@@ -79,7 +236,7 @@ def get_latest_cv_estimate(lot_id: str, db: Session) -> CvEstimateDB | None:
 
 def compute_lot_status(lot_id: str, db: Session) -> LotResponse:
     """Compute the current status for a lot based on weighted recent reports and CV data."""
-    lot_info = LOTS[lot_id]
+    lot_info = get_lot_info(lot_id, db)
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(minutes=90)
 
@@ -205,6 +362,9 @@ def compute_lot_status(lot_id: str, db: Session) -> LotResponse:
         if last_updated.tzinfo is None:
             last_updated = last_updated.replace(tzinfo=timezone.utc)
 
+    coords = [Coordinate(lat=c["lat"], lng=c["lng"]) for c in lot_info["coordinates"]]
+    centroid = Coordinate(lat=lot_info["centroid_lat"], lng=lot_info["centroid_lng"])
+
     return LotResponse(
         id=lot_info["id"],
         name=lot_info["name"],
@@ -218,6 +378,8 @@ def compute_lot_status(lot_id: str, db: Session) -> LotResponse:
         cv_source=cv_source,
         data_source=data_source,
         active_sessions=active_sessions,
+        coordinates=coords,
+        centroid=centroid,
     )
 
 
@@ -298,6 +460,9 @@ def create_report(
     db: Session = Depends(get_db),
 ):
     """Submit a parking report."""
+    # Validate lot exists in DB
+    lot_info = get_lot_info(report.lot_id, db)
+
     # Compute status BEFORE the new report
     old_status = compute_lot_status(report.lot_id, db).status
 
@@ -315,7 +480,7 @@ def create_report(
     new_status = compute_lot_status(report.lot_id, db).status
 
     if (old_status, new_status) in NOTIFY_TRANSITIONS:
-        lot_name = LOTS[report.lot_id]["name"]
+        lot_name = lot_info["name"]
         body = _build_push_body(lot_name, old_status, new_status)
         background_tasks.add_task(send_push_notifications, "Parking Update", body, db)
 
@@ -325,14 +490,101 @@ def create_report(
 @app.get("/api/lots", response_model=list[LotResponse])
 def get_all_lots(db: Session = Depends(get_db)):
     """Get status of all parking lots."""
-    return [compute_lot_status(lot_id, db) for lot_id in LOTS]
+    lot_ids = get_all_lot_ids(db)
+    return [compute_lot_status(lot_id, db) for lot_id in lot_ids]
+
+
+# --- Lot Definition CRUD Endpoints ---
+# These must be registered BEFORE /api/lots/{lot_id} to avoid path conflicts.
+
+
+def _lot_db_to_response(lot: LotDB) -> LotDefinitionResponse:
+    """Convert a LotDB record to a LotDefinitionResponse."""
+    coords = json.loads(lot.coordinates)
+    return LotDefinitionResponse(
+        id=lot.id,
+        name=lot.name,
+        capacity=lot.capacity,
+        coordinates=[Coordinate(lat=c["lat"], lng=c["lng"]) for c in coords],
+        centroid=Coordinate(lat=lot.centroid_lat, lng=lot.centroid_lng),
+        created_at=lot.created_at,
+        updated_at=lot.updated_at,
+    )
+
+
+@app.get("/api/lots/definitions", response_model=list[LotDefinitionResponse])
+def get_lot_definitions(db: Session = Depends(get_db)):
+    """Return all lot definitions with polygons."""
+    lots = db.query(LotDB).all()
+    return [_lot_db_to_response(lot) for lot in lots]
+
+
+@app.post("/api/lots/definitions", response_model=LotDefinitionResponse, status_code=201)
+def create_lot_definition(lot_def: LotDefinition, db: Session = Depends(get_db)):
+    """Create a new lot definition."""
+    existing = db.query(LotDB).filter(LotDB.id == lot_def.id).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Lot '{lot_def.id}' already exists")
+
+    coords = [{"lat": c.lat, "lng": c.lng} for c in lot_def.coordinates]
+    centroid_lat, centroid_lng = compute_centroid(coords)
+
+    now = datetime.now(timezone.utc)
+    db_lot = LotDB(
+        id=lot_def.id,
+        name=lot_def.name,
+        capacity=lot_def.capacity,
+        coordinates=json.dumps(coords),
+        centroid_lat=centroid_lat,
+        centroid_lng=centroid_lng,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(db_lot)
+    db.commit()
+    db.refresh(db_lot)
+    return _lot_db_to_response(db_lot)
+
+
+@app.put("/api/lots/definitions/{lot_id}", response_model=LotDefinitionResponse)
+def update_lot_definition(lot_id: str, update: LotDefinitionUpdate, db: Session = Depends(get_db)):
+    """Update a lot's name, capacity, or coordinates. Recomputes centroid if coordinates change."""
+    lot = db.query(LotDB).filter(LotDB.id == lot_id).first()
+    if lot is None:
+        raise HTTPException(status_code=404, detail=f"Lot '{lot_id}' not found")
+
+    if update.name is not None:
+        lot.name = update.name
+    if update.capacity is not None:
+        lot.capacity = update.capacity
+    if update.coordinates is not None:
+        coords = [{"lat": c.lat, "lng": c.lng} for c in update.coordinates]
+        lot.coordinates = json.dumps(coords)
+        centroid_lat, centroid_lng = compute_centroid(coords)
+        lot.centroid_lat = centroid_lat
+        lot.centroid_lng = centroid_lng
+
+    lot.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(lot)
+    return _lot_db_to_response(lot)
+
+
+@app.delete("/api/lots/definitions/{lot_id}")
+def delete_lot_definition(lot_id: str, db: Session = Depends(get_db)):
+    """Delete a lot definition."""
+    lot = db.query(LotDB).filter(LotDB.id == lot_id).first()
+    if lot is None:
+        raise HTTPException(status_code=404, detail=f"Lot '{lot_id}' not found")
+    db.delete(lot)
+    db.commit()
+    return {"status": "deleted", "lot_id": lot_id}
 
 
 @app.get("/api/lots/{lot_id}", response_model=LotResponse)
 def get_lot(lot_id: str, db: Session = Depends(get_db)):
     """Get status of a single parking lot."""
-    if lot_id not in LOTS:
-        raise HTTPException(status_code=404, detail=f"Lot '{lot_id}' not found")
+    # get_lot_info will raise 404 if not found
     return compute_lot_status(lot_id, db)
 
 
@@ -346,6 +598,9 @@ def create_cv_estimate(
     estimate: CvEstimateCreate, db: Session = Depends(get_db)
 ):
     """Submit a CV occupancy estimate. Requires X-API-Key header."""
+    # Validate lot exists in DB
+    get_lot_info(estimate.lot_id, db)
+
     db_estimate = CvEstimateDB(
         lot_id=estimate.lot_id,
         occupied_spaces=estimate.occupied_spaces,
@@ -365,7 +620,7 @@ def create_cv_estimate(
 def get_cv_latest(db: Session = Depends(get_db)):
     """Get the latest CV estimate for each lot (within last 30 min)."""
     results = []
-    for lot_id in LOTS:
+    for lot_id in get_all_lot_ids(db):
         estimate = get_latest_cv_estimate(lot_id, db)
         if estimate is not None:
             results.append(estimate)
@@ -375,8 +630,7 @@ def get_cv_latest(db: Session = Depends(get_db)):
 @app.get("/api/cv/latest/{lot_id}", response_model=CvEstimateResponse)
 def get_cv_latest_for_lot(lot_id: str, db: Session = Depends(get_db)):
     """Get the latest CV estimate for a specific lot."""
-    if lot_id not in LOTS:
-        raise HTTPException(status_code=404, detail=f"Lot '{lot_id}' not found")
+    get_lot_info(lot_id, db)
     estimate = get_latest_cv_estimate(lot_id, db)
     if estimate is None:
         raise HTTPException(
@@ -432,6 +686,9 @@ def unregister_push_token(payload: PushTokenCreate, db: Session = Depends(get_db
 )
 def occupancy_enter(event: OccupancyEvent, db: Session = Depends(get_db)):
     """Record a device entering a parking lot via geofence."""
+    # Validate lot exists
+    get_lot_info(event.lot_id, db)
+
     # Check if user already has an active session for this lot (idempotent)
     existing = (
         db.query(OccupancySessionDB)
@@ -498,7 +755,7 @@ def occupancy_active(db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
     session_cutoff = now - timedelta(hours=4)
     results = []
-    for lot_id in LOTS:
+    for lot_id in get_all_lot_ids(db):
         count = (
             db.query(OccupancySessionDB)
             .filter(
@@ -510,3 +767,5 @@ def occupancy_active(db: Session = Depends(get_db)):
         )
         results.append({"lot_id": lot_id, "active_count": count})
     return results
+
+

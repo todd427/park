@@ -6,8 +6,70 @@ from typing import Literal, Optional
 from pydantic import BaseModel, field_validator
 
 
-VALID_LOT_IDS = {"A", "B", "C", "D"}
 VALID_REPORT_TYPES = {"found", "full"}
+
+
+class Coordinate(BaseModel):
+    lat: float
+    lng: float
+
+
+class LotDefinition(BaseModel):
+    id: str
+    name: str
+    capacity: int
+    coordinates: list[Coordinate]
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("id must be a non-empty string")
+        return v
+
+    @field_validator("capacity")
+    @classmethod
+    def validate_capacity(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("capacity must be > 0")
+        return v
+
+    @field_validator("coordinates")
+    @classmethod
+    def validate_coordinates(cls, v: list) -> list:
+        if len(v) < 3:
+            raise ValueError("coordinates must have at least 3 points")
+        return v
+
+
+class LotDefinitionUpdate(BaseModel):
+    name: str | None = None
+    capacity: int | None = None
+    coordinates: list[Coordinate] | None = None
+
+    @field_validator("capacity")
+    @classmethod
+    def validate_capacity(cls, v: int | None) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError("capacity must be > 0")
+        return v
+
+    @field_validator("coordinates")
+    @classmethod
+    def validate_coordinates(cls, v: list | None) -> list | None:
+        if v is not None and len(v) < 3:
+            raise ValueError("coordinates must have at least 3 points")
+        return v
+
+
+class LotDefinitionResponse(BaseModel):
+    id: str
+    name: str
+    capacity: int
+    coordinates: list[Coordinate]
+    centroid: Coordinate
+    created_at: datetime
+    updated_at: datetime
 
 
 class ReportCreate(BaseModel):
@@ -18,8 +80,8 @@ class ReportCreate(BaseModel):
     @field_validator("lot_id")
     @classmethod
     def validate_lot_id(cls, v: str) -> str:
-        if v not in VALID_LOT_IDS:
-            raise ValueError(f"lot_id must be one of {VALID_LOT_IDS}")
+        if not v or not v.strip():
+            raise ValueError("lot_id must be a non-empty string")
         return v
 
     @field_validator("report_type")
@@ -51,8 +113,8 @@ class CvEstimateCreate(BaseModel):
     @field_validator("lot_id")
     @classmethod
     def validate_lot_id(cls, v: str) -> str:
-        if v not in VALID_LOT_IDS:
-            raise ValueError(f"lot_id must be one of {VALID_LOT_IDS}")
+        if not v or not v.strip():
+            raise ValueError("lot_id must be a non-empty string")
         return v
 
     @field_validator("confidence")
@@ -121,8 +183,8 @@ class OccupancyEvent(BaseModel):
     @field_validator("lot_id")
     @classmethod
     def validate_lot_id(cls, v: str) -> str:
-        if v not in VALID_LOT_IDS:
-            raise ValueError(f"lot_id must be one of {VALID_LOT_IDS}")
+        if not v or not v.strip():
+            raise ValueError("lot_id must be a non-empty string")
         return v
 
 
@@ -149,3 +211,5 @@ class LotResponse(BaseModel):
     cv_source: Optional[str] = None
     data_source: str = "crowd"
     active_sessions: int = 0
+    coordinates: Optional[list[Coordinate]] = None
+    centroid: Optional[Coordinate] = None

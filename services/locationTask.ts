@@ -4,23 +4,29 @@
  * This file is imported in index.ts (app entry) to ensure registration.
  *
  * Tracks enter AND exit events for passive occupancy counting.
+ * Fetches lot definitions from backend (cached in AsyncStorage).
  */
 
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { MOCK_LOTS } from '../data/mockData';
 import { emitGeofenceEntry } from './geofenceEvents';
 
 export const GEOFENCE_TASK = 'park-geofence';
 const GEOFENCE_RADIUS_M = 80;
-const ACTIVE_LOT_KEY = 'park_active_lot'; // lot ID the user is currently in (or null)
+const ACTIVE_LOT_KEY = 'park_active_lot';
 const USER_ID_KEY = 'park_user_id';
-const PROMPTED_KEY = 'park_prompted_lots'; // lots already prompted this session
+const PROMPTED_KEY = 'park_prompted_lots';
+const LOTS_CACHE_KEY = 'park_lots_cache';
 
 const API_BASE = __DEV__
   ? 'http://10.0.2.2:8000'
   : 'https://park-api.fly.dev';
+
+interface CachedLot {
+  id: string;
+  centroid: { lat: number; lng: number };
+}
 
 function haversineDistance(
   lat1: number,
@@ -38,7 +44,46 @@ function haversineDistance(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** POST enter/exit events to backend (best-effort, silent) */
+/** Fetch and cache lot centroids for geofence checks */
+async function getLots(): Promise<CachedLot[]> {
+  // Try cache first
+  const cached = await AsyncStorage.getItem(LOTS_CACHE_KEY);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      // Refresh cache in background if older than 10 min
+      if (parsed.ts && Date.now() - parsed.ts < 600_000) {
+        return parsed.lots;
+      }
+    } catch {}
+  }
+
+  // Fetch from backend
+  try {
+    const res = await fetch(`${API_BASE}/api/lots/definitions`);
+    if (res.ok) {
+      const data = await res.json();
+      const lots: CachedLot[] = data.map((d: any) => ({
+        id: d.id,
+        centroid: d.centroid,
+      }));
+      await AsyncStorage.setItem(
+        LOTS_CACHE_KEY,
+        JSON.stringify({ lots, ts: Date.now() }),
+      );
+      return lots;
+    }
+  } catch {}
+
+  // Fallback to whatever cache we have (even if stale)
+  if (cached) {
+    try {
+      return JSON.parse(cached).lots ?? [];
+    } catch {}
+  }
+  return [];
+}
+
 async function postOccupancyEvent(
   event: 'enter' | 'exit',
   lotId: string,
@@ -50,12 +95,9 @@ async function postOccupancyEvent(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lot_id: lotId, user_id: userId }),
     });
-  } catch {
-    // Best effort — will correct on next position update
-  }
+  } catch {}
 }
 
-// Register background task at module scope
 TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (error) {
     console.warn('Park geofence task error:', error.message);
@@ -67,16 +109,18 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
 
   const { latitude, longitude } = locations[0].coords;
   const userId = await AsyncStorage.getItem(USER_ID_KEY);
-  if (!userId) return; // Not yet registered
+  if (!userId) return;
 
-  // Determine which lot (if any) the user is currently inside
+  const lots = await getLots();
+  if (!lots.length) return;
+
   let currentLotId: string | null = null;
-  for (const lot of MOCK_LOTS) {
+  for (const lot of lots) {
     const dist = haversineDistance(
       latitude,
       longitude,
-      lot.centroid.latitude,
-      lot.centroid.longitude,
+      lot.centroid.lat,
+      lot.centroid.lng,
     );
     if (dist <= GEOFENCE_RADIUS_M) {
       currentLotId = lot.id;
@@ -84,20 +128,15 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
     }
   }
 
-  // Load previous active lot
   const previousLotId = await AsyncStorage.getItem(ACTIVE_LOT_KEY);
 
-  // Handle transitions
   if (currentLotId && currentLotId !== previousLotId) {
-    // Entered a new lot
     if (previousLotId) {
-      // Exit the previous lot first
       await postOccupancyEvent('exit', previousLotId, userId);
     }
     await postOccupancyEvent('enter', currentLotId, userId);
     await AsyncStorage.setItem(ACTIVE_LOT_KEY, currentLotId);
 
-    // Emit entry event for ReportModal prompt (once per lot per session)
     const promptedRaw = await AsyncStorage.getItem(PROMPTED_KEY);
     const prompted: Set<string> = new Set(promptedRaw ? JSON.parse(promptedRaw) : []);
     if (!prompted.has(currentLotId)) {
@@ -106,14 +145,11 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
       emitGeofenceEntry(currentLotId);
     }
   } else if (!currentLotId && previousLotId) {
-    // Exited all lots
     await postOccupancyEvent('exit', previousLotId, userId);
     await AsyncStorage.removeItem(ACTIVE_LOT_KEY);
   }
-  // If currentLotId === previousLotId, no change — do nothing
 });
 
-/** Start background location tracking with foreground service (Android) */
 export async function startGeofenceTracking(): Promise<boolean> {
   const started = await Location.hasStartedLocationUpdatesAsync(GEOFENCE_TASK);
   if (started) return true;
@@ -140,7 +176,6 @@ export async function startGeofenceTracking(): Promise<boolean> {
   return true;
 }
 
-/** Stop background tracking */
 export async function stopGeofenceTracking(): Promise<void> {
   const started = await Location.hasStartedLocationUpdatesAsync(GEOFENCE_TASK);
   if (started) {
@@ -148,7 +183,12 @@ export async function stopGeofenceTracking(): Promise<void> {
   }
 }
 
-/** Reset session state (e.g. new day) */
 export async function resetGeofenceState(): Promise<void> {
   await AsyncStorage.multiRemove([ACTIVE_LOT_KEY, PROMPTED_KEY]);
+}
+
+/** Force refresh the lot cache (call after creating/editing lots) */
+export async function refreshLotCache(): Promise<void> {
+  await AsyncStorage.removeItem(LOTS_CACHE_KEY);
+  await getLots();
 }

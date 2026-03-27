@@ -45,6 +45,19 @@ class ReportDB(Base):
     )
 
 
+class LotDB(Base):
+    __tablename__ = "lots"
+
+    id = Column(Text, primary_key=True)
+    name = Column(Text, nullable=False)
+    capacity = Column(Integer, nullable=False)
+    coordinates = Column(Text, nullable=False)  # JSON string: [{"lat": ..., "lng": ...}, ...]
+    centroid_lat = Column(Float, nullable=False)
+    centroid_lng = Column(Float, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class PushTokenDB(Base):
     __tablename__ = "push_tokens"
 
