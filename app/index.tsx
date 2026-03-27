@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import MapView, { type Region } from 'react-native-maps';
+import MapView, { type MapType, type Region } from 'react-native-maps';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Colors, StatusColors, StatusLabels, type ParkingStatus } from '../constants/theme';
 import { type Lot } from '../data/types';
@@ -15,12 +15,19 @@ import { useUserId } from '../hooks/useUserId';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { fetchLots, submitReport } from '../services/api';
 
+const MAP_TYPES: { type: MapType; label: string }[] = [
+  { type: 'hybrid', label: 'Satellite' },
+  { type: 'standard', label: 'Map' },
+  { type: 'terrain', label: 'Terrain' },
+];
+
 export default function MapScreen() {
   const [lots, setLots] = useState<Lot[]>([]);
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const [editorActive, setEditorActive] = useState(false);
   const [mapCenter, setMapCenter] = useState(CAMPUS_CENTER);
+  const [mapTypeIndex, setMapTypeIndex] = useState(0);
   const userId = useUserId();
   usePushNotifications(userId);
 
@@ -70,6 +77,10 @@ export default function MapScreen() {
     onSaved: loadLots,
   });
 
+  const cycleMapType = () => {
+    setMapTypeIndex((prev) => (prev + 1) % MAP_TYPES.length);
+  };
+
   return (
     <GestureHandlerRootView style={styles.container}>
       {backgroundEnabled && !editorActive && (
@@ -82,7 +93,7 @@ export default function MapScreen() {
 
       <MapView
         style={styles.map}
-        mapType="hybrid"
+        mapType={MAP_TYPES[mapTypeIndex].type}
         initialRegion={CAMPUS_CENTER}
         onPress={editorActive && editor ? editor.handleMapPress : undefined}
         onRegionChangeComplete={(region) => setMapCenter(region)}
@@ -105,7 +116,28 @@ export default function MapScreen() {
 
       {editor?.renderControls()}
 
-      {!editorActive && <SnapButton userId={userId} />}
+      {/* Right-side button stack — always visible when not editing */}
+      {!editorActive && (
+        <View style={styles.rightButtons}>
+          <SnapButton userId={userId} />
+          <TouchableOpacity
+            style={styles.mapTypeBtn}
+            onPress={cycleMapType}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.mapTypeBtnText}>
+              {MAP_TYPES[mapTypeIndex].label}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.editBtn}
+            onPress={() => setEditorActive(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.editBtnText}>Edit Lots</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {!editorActive && (
         <>
@@ -121,15 +153,6 @@ export default function MapScreen() {
               ),
             )}
           </View>
-
-          {/* Edit Lots button */}
-          <TouchableOpacity
-            style={styles.editBtn}
-            onPress={() => setEditorActive(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.editBtnText}>Edit Lots</Text>
-          </TouchableOpacity>
 
           <ReportModal
             lot={selectedLot}
@@ -151,11 +174,42 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
+  rightButtons: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    gap: 8,
+    zIndex: 15,
+  },
+  mapTypeBtn: {
+    backgroundColor: Colors.BG_CARD + 'E6',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  mapTypeBtnText: {
+    color: Colors.TEXT_PRIMARY,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  editBtn: {
+    backgroundColor: Colors.ATU_BLUE,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  editBtnText: {
+    color: Colors.ATU_GOLD,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   legend: {
     position: 'absolute',
     bottom: 16,
     left: 16,
-    right: 80,
+    right: 16,
     flexDirection: 'row',
     justifyContent: 'space-around',
     backgroundColor: Colors.BG_CARD + 'E6',
@@ -177,20 +231,6 @@ const styles = StyleSheet.create({
     color: Colors.TEXT_PRIMARY,
     fontSize: 11,
     fontWeight: '600',
-  },
-  editBtn: {
-    position: 'absolute',
-    bottom: 16,
-    right: 16,
-    backgroundColor: Colors.ATU_BLUE,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-  },
-  editBtnText: {
-    color: Colors.ATU_GOLD,
-    fontSize: 12,
-    fontWeight: '700',
   },
   geofenceBanner: {
     position: 'absolute',

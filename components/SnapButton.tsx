@@ -72,14 +72,11 @@ export function SnapButton({ userId }: SnapButtonProps) {
 
 const styles = StyleSheet.create({
   button: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
     backgroundColor: Colors.ATU_BLUE,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12,
-    zIndex: 5,
+    alignItems: 'center',
   },
   text: {
     color: Colors.ATU_GOLD,
