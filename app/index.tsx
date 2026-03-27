@@ -19,7 +19,6 @@ export default function MapScreen() {
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const [editorActive, setEditorActive] = useState(false);
-  const [dragging, setDragging] = useState(false);
   const userId = useUserId();
   usePushNotifications(userId);
 
@@ -66,8 +65,6 @@ export default function MapScreen() {
     lots,
     onClose: () => setEditorActive(false),
     onSaved: loadLots,
-    onDragStart: () => setDragging(true),
-    onDragEnd: () => setDragging(false),
   });
 
   return (
@@ -85,9 +82,6 @@ export default function MapScreen() {
         mapType="hybrid"
         initialRegion={CAMPUS_CENTER}
         onPress={editorActive && editor ? editor.handleMapPress : undefined}
-        scrollEnabled={!dragging}
-        rotateEnabled={!dragging}
-        pitchEnabled={!dragging}
       >
         {lots.map((lot) => (
           <LotOverlay

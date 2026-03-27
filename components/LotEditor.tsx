@@ -19,20 +19,14 @@ interface LotEditorProps {
   lots: Lot[];
   onClose: () => void;
   onSaved: () => void;
-  onDragStart?: () => void;
-  onDragEnd?: () => void;
 }
 
 type EditorMode = 'idle' | 'add' | 'edit';
 
-export function useLotEditor() {
-  const [active, setActive] = useState(false);
-  return { active, setActive };
-}
-
-export function LotEditor({ active, lots, onClose, onSaved, onDragStart, onDragEnd }: LotEditorProps) {
+export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
   const [mode, setMode] = useState<EditorMode>('idle');
   const [pins, setPins] = useState<LatLng[]>([]);
+  const [selectedPin, setSelectedPin] = useState<number | null>(null);
   const [editingLot, setEditingLot] = useState<Lot | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState('');
@@ -43,8 +37,28 @@ export function LotEditor({ active, lots, onClose, onSaved, onDragStart, onDragE
   if (!active) return null;
 
   const handleMapPress = (e: MapPressEvent) => {
-    if (mode === 'add' || mode === 'edit') {
-      setPins((prev) => [...prev, e.nativeEvent.coordinate]);
+    if (mode !== 'add' && mode !== 'edit') return;
+    const coord = e.nativeEvent.coordinate;
+
+    if (selectedPin !== null) {
+      // Move the selected pin to the tapped location
+      setPins((prev) => {
+        const updated = [...prev];
+        updated[selectedPin] = coord;
+        return updated;
+      });
+      setSelectedPin(null);
+    } else {
+      // Add a new pin
+      setPins((prev) => [...prev, coord]);
+    }
+  };
+
+  const handleMarkerPress = (index: number) => {
+    if (selectedPin === index) {
+      setSelectedPin(null); // Deselect
+    } else {
+      setSelectedPin(index); // Select for moving
     }
   };
 
@@ -55,6 +69,7 @@ export function LotEditor({ active, lots, onClose, onSaved, onDragStart, onDragE
     setFormName(lot.name);
     setFormCapacity(String(lot.capacity));
     setFormId(lot.id);
+    setSelectedPin(null);
     setMode('edit');
   };
 
@@ -64,11 +79,25 @@ export function LotEditor({ active, lots, onClose, onSaved, onDragStart, onDragE
     setFormCapacity('');
     setFormId('');
     setEditingLot(null);
+    setSelectedPin(null);
     setMode('add');
   };
 
-  const handleUndo = () => setPins((prev) => prev.slice(0, -1));
-  const handleClear = () => setPins([]);
+  const handleUndo = () => {
+    setSelectedPin(null);
+    setPins((prev) => prev.slice(0, -1));
+  };
+
+  const handleClear = () => {
+    setSelectedPin(null);
+    setPins([]);
+  };
+
+  const handleDeletePin = () => {
+    if (selectedPin === null) return;
+    setPins((prev) => prev.filter((_, i) => i !== selectedPin));
+    setSelectedPin(null);
+  };
 
   const handleSave = () => {
     if (pins.length < 3) {
@@ -147,9 +176,9 @@ export function LotEditor({ active, lots, onClose, onSaved, onDragStart, onDragE
     setPins([]);
     setEditingLot(null);
     setShowForm(false);
+    setSelectedPin(null);
   };
 
-  // Map overlays for the editor
   const renderMapOverlays = () => (
     <>
       {(mode === 'add' || mode === 'edit') && pins.length >= 3 && (
@@ -165,17 +194,9 @@ export function LotEditor({ active, lots, onClose, onSaved, onDragStart, onDragE
           <Marker
             key={`editor-pin-${i}`}
             coordinate={pin}
-            draggable
-            onDragStart={() => onDragStart?.()}
-            onDragEnd={(e) => {
-              setPins((prev) => {
-                const updated = [...prev];
-                updated[i] = e.nativeEvent.coordinate;
-                return updated;
-              });
-              onDragEnd?.();
-            }}
-            pinColor="#C8A84B"
+            onPress={() => handleMarkerPress(i)}
+            pinColor={selectedPin === i ? '#FF0000' : '#C8A84B'}
+            title={selectedPin === i ? 'Tap map to move' : `Point ${i + 1}`}
           />
         ))}
     </>
@@ -210,13 +231,23 @@ export function LotEditor({ active, lots, onClose, onSaved, onDragStart, onDragE
                 {mode === 'add' ? 'New Lot' : `Editing: ${editingLot?.name}`}
               </Text>
               <Text style={styles.hint}>
-                Tap map to add vertices. Drag markers to adjust.
+                {selectedPin !== null
+                  ? 'Tap map to move selected point (red marker)'
+                  : 'Tap map to add points. Tap a marker to select it for moving.'}
                 {'\n'}{pins.length} point{pins.length !== 1 ? 's' : ''}
               </Text>
               <View style={styles.toolbarBtns}>
                 <TouchableOpacity style={styles.btn} onPress={handleUndo}>
                   <Text style={styles.btnText}>Undo</Text>
                 </TouchableOpacity>
+                {selectedPin !== null && (
+                  <TouchableOpacity
+                    style={[styles.btn, { backgroundColor: Colors.STATUS_FILLING }]}
+                    onPress={handleDeletePin}
+                  >
+                    <Text style={styles.btnText}>Remove Point</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity style={styles.btn} onPress={handleClear}>
                   <Text style={styles.btnText}>Clear</Text>
                 </TouchableOpacity>
@@ -242,7 +273,6 @@ export function LotEditor({ active, lots, onClose, onSaved, onDragStart, onDragE
           )}
         </View>
 
-        {/* Name/Capacity form modal */}
         <Modal visible={showForm} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={styles.formCard}>
