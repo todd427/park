@@ -54,6 +54,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ],
     'expo-task-manager',
     [
+      'expo-image-picker',
+      {
+        cameraPermission: 'Park uses the camera to snap photos of parking lots.',
+      },
+    ],
+    [
       'expo-notifications',
       {
         icon: './assets/icon.png',

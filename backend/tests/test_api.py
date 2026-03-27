@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from unittest.mock import MagicMock, patch
 
-from backend.database import Base, CvEstimateDB, LotDB, OccupancySessionDB, PushTokenDB, ReportDB, get_db
+from backend.database import Base, CvEstimateDB, LotDB, OccupancySessionDB, PhotoDB, PushTokenDB, ReportDB, get_db
 from backend.main import SEED_LOTS, app
 
 # Use in-memory SQLite for tests
@@ -718,3 +718,22 @@ def test_report_on_new_lot(client):
     data = response.json()
     assert data["lot_id"] == "E"
     assert data["report_type"] == "found"
+
+
+# --- Photo Upload Tests ---
+
+
+# 33. test_upload_photo — POST multipart form, assert 201
+def test_upload_photo(client):
+    import io
+
+    fake_file = io.BytesIO(b"fake image data")
+    response = client.post(
+        "/api/photos",
+        files={"file": ("test.jpg", fake_file, "image/jpeg")},
+        data={"user_id": "user-photo-1", "note": "test snap"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["filename"] == "test.jpg"
+    assert "url" in data

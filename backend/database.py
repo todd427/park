@@ -101,6 +101,17 @@ class OccupancySessionDB(Base):
     )
 
 
+class PhotoDB(Base):
+    __tablename__ = "photos"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lot_id = Column(Text, nullable=True)  # optional — may not be lot-specific
+    user_id = Column(Text, nullable=False)
+    filename = Column(Text, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
 def create_tables():
     """Create all tables in the database."""
     Base.metadata.create_all(bind=engine)

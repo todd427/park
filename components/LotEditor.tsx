@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Marker, Polygon, type LatLng, type MapPressEvent } from 'react-native-maps';
+import { Circle, Marker, Polygon, type LatLng, type MapPressEvent } from 'react-native-maps';
 import { Colors } from '../constants/theme';
 import { type Lot } from '../data/types';
 import { createLot, updateLot, deleteLot } from '../services/api';
@@ -17,16 +17,47 @@ import { refreshLotCache } from '../services/locationTask';
 interface LotEditorProps {
   active: boolean;
   lots: Lot[];
+  mapCenter: LatLng;
   onClose: () => void;
   onSaved: () => void;
 }
 
 type EditorMode = 'idle' | 'add' | 'edit';
 
-export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
+/** Calculate midpoint of two coordinates */
+function midpoint(a: LatLng, b: LatLng): LatLng {
+  return {
+    latitude: (a.latitude + b.latitude) / 2,
+    longitude: (a.longitude + b.longitude) / 2,
+  };
+}
+
+/** Get edges as pairs of indices + their midpoints */
+function getEdges(pts: LatLng[]) {
+  const edges: { i: number; j: number; mid: LatLng }[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    edges.push({ i, j, mid: midpoint(pts[i], pts[j]) });
+  }
+  return edges;
+}
+
+/** Create a default square at a given center, ~50m side */
+function defaultSquare(center: LatLng): LatLng[] {
+  const d = 0.00025; // ~25m in lat/lng at this latitude
+  return [
+    { latitude: center.latitude + d, longitude: center.longitude - d },
+    { latitude: center.latitude + d, longitude: center.longitude + d },
+    { latitude: center.latitude - d, longitude: center.longitude + d },
+    { latitude: center.latitude - d, longitude: center.longitude - d },
+  ];
+}
+
+export function LotEditor({ active, lots, mapCenter, onClose, onSaved }: LotEditorProps) {
   const [mode, setMode] = useState<EditorMode>('idle');
   const [pins, setPins] = useState<LatLng[]>([]);
-  const [selectedPin, setSelectedPin] = useState<number | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<number | null>(null);
+  const [selectedVertex, setSelectedVertex] = useState<number | null>(null);
   const [editingLot, setEditingLot] = useState<Lot | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState('');
@@ -36,30 +67,52 @@ export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
 
   if (!active) return null;
 
+  const edges = pins.length >= 3 ? getEdges(pins) : [];
+
   const handleMapPress = (e: MapPressEvent) => {
     if (mode !== 'add' && mode !== 'edit') return;
     const coord = e.nativeEvent.coordinate;
 
-    if (selectedPin !== null) {
-      // Move the selected pin to the tapped location
+    if (selectedEdge !== null && pins.length >= 3) {
+      // Move the selected edge: shift both vertices by the delta from midpoint to tap
+      const edge = edges[selectedEdge];
+      const delta = {
+        latitude: coord.latitude - edge.mid.latitude,
+        longitude: coord.longitude - edge.mid.longitude,
+      };
       setPins((prev) => {
         const updated = [...prev];
-        updated[selectedPin] = coord;
+        updated[edge.i] = {
+          latitude: prev[edge.i].latitude + delta.latitude,
+          longitude: prev[edge.i].longitude + delta.longitude,
+        };
+        updated[edge.j] = {
+          latitude: prev[edge.j].latitude + delta.latitude,
+          longitude: prev[edge.j].longitude + delta.longitude,
+        };
         return updated;
       });
-      setSelectedPin(null);
-    } else {
-      // Add a new pin
-      setPins((prev) => [...prev, coord]);
+      setSelectedEdge(null);
+    } else if (selectedVertex !== null) {
+      // Move the selected vertex to tap location
+      setPins((prev) => {
+        const updated = [...prev];
+        updated[selectedVertex] = coord;
+        return updated;
+      });
+      setSelectedVertex(null);
     }
+    // If nothing selected, ignore map tap (no more adding random points)
   };
 
-  const handleMarkerPress = (index: number) => {
-    if (selectedPin === index) {
-      setSelectedPin(null); // Deselect
-    } else {
-      setSelectedPin(index); // Select for moving
-    }
+  const handleEdgeTap = (edgeIndex: number) => {
+    setSelectedVertex(null);
+    setSelectedEdge(selectedEdge === edgeIndex ? null : edgeIndex);
+  };
+
+  const handleVertexTap = (vertexIndex: number) => {
+    setSelectedEdge(null);
+    setSelectedVertex(selectedVertex === vertexIndex ? null : vertexIndex);
   };
 
   const handleLotTap = (lot: Lot) => {
@@ -69,34 +122,38 @@ export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
     setFormName(lot.name);
     setFormCapacity(String(lot.capacity));
     setFormId(lot.id);
-    setSelectedPin(null);
+    setSelectedEdge(null);
+    setSelectedVertex(null);
     setMode('edit');
   };
 
   const handleStartAdd = () => {
-    setPins([]);
+    setPins(defaultSquare(mapCenter));
     setFormName('');
     setFormCapacity('');
     setFormId('');
     setEditingLot(null);
-    setSelectedPin(null);
+    setSelectedEdge(null);
+    setSelectedVertex(null);
     setMode('add');
   };
 
-  const handleUndo = () => {
-    setSelectedPin(null);
-    setPins((prev) => prev.slice(0, -1));
+  const handleAddVertex = () => {
+    // Insert a new vertex at the selected edge's midpoint
+    if (selectedEdge === null || pins.length < 3) return;
+    const edge = edges[selectedEdge];
+    setPins((prev) => {
+      const updated = [...prev];
+      updated.splice(edge.j, 0, edge.mid);
+      return updated;
+    });
+    setSelectedEdge(null);
   };
 
-  const handleClear = () => {
-    setSelectedPin(null);
-    setPins([]);
-  };
-
-  const handleDeletePin = () => {
-    if (selectedPin === null) return;
-    setPins((prev) => prev.filter((_, i) => i !== selectedPin));
-    setSelectedPin(null);
+  const handleRemoveVertex = () => {
+    if (selectedVertex === null || pins.length <= 3) return;
+    setPins((prev) => prev.filter((_, i) => i !== selectedVertex));
+    setSelectedVertex(null);
   };
 
   const handleSave = () => {
@@ -104,39 +161,23 @@ export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
       Alert.alert('Need at least 3 points');
       return;
     }
-    if (mode === 'add') {
-      setFormName('');
-      setFormCapacity('');
-      setFormId('');
-    }
     setShowForm(true);
   };
 
   const handleSubmit = async () => {
-    if (!formName.trim()) {
-      Alert.alert('Name required');
-      return;
-    }
+    if (!formName.trim()) { Alert.alert('Name required'); return; }
     const cap = parseInt(formCapacity, 10);
-    if (!cap || cap <= 0) {
-      Alert.alert('Valid capacity required');
-      return;
-    }
+    if (!cap || cap <= 0) { Alert.alert('Valid capacity required'); return; }
 
     const coords = pins.map((p) => ({ lat: p.latitude, lng: p.longitude }));
     setSaving(true);
-
     try {
       if (mode === 'add') {
         const id = formId.trim() || formName.trim().charAt(0).toUpperCase();
         await createLot({ id, name: formName.trim(), capacity: cap, coordinates: coords });
         Alert.alert('Created', `Lot "${formName.trim()}" added.`);
       } else if (mode === 'edit' && editingLot) {
-        await updateLot(editingLot.id, {
-          name: formName.trim(),
-          capacity: cap,
-          coordinates: coords,
-        });
+        await updateLot(editingLot.id, { name: formName.trim(), capacity: cap, coordinates: coords });
         Alert.alert('Updated', `Lot "${formName.trim()}" saved.`);
       }
       await refreshLotCache();
@@ -162,7 +203,6 @@ export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
             await refreshLotCache();
             onSaved();
             resetEditor();
-            Alert.alert('Deleted', `Lot "${editingLot.name}" removed.`);
           } catch (e: any) {
             Alert.alert('Error', e.message);
           }
@@ -176,28 +216,59 @@ export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
     setPins([]);
     setEditingLot(null);
     setShowForm(false);
-    setSelectedPin(null);
+    setSelectedEdge(null);
+    setSelectedVertex(null);
   };
+
+  const selectionHint = selectedEdge !== null
+    ? 'Edge selected (blue). Tap map to move it there.'
+    : selectedVertex !== null
+      ? 'Vertex selected (red). Tap map to move it.'
+      : 'Tap a blue circle to select an edge. Tap a corner to select a vertex.';
 
   const renderMapOverlays = () => (
     <>
       {(mode === 'add' || mode === 'edit') && pins.length >= 3 && (
         <Polygon
           coordinates={pins}
-          fillColor={Colors.ATU_GOLD + '40'}
+          fillColor={Colors.ATU_GOLD + '30'}
           strokeColor={Colors.ATU_GOLD}
           strokeWidth={2}
         />
       )}
+      {/* Vertex markers (corners) */}
       {(mode === 'add' || mode === 'edit') &&
         pins.map((pin, i) => (
           <Marker
-            key={`editor-pin-${i}`}
+            key={`v-${i}`}
             coordinate={pin}
-            onPress={() => handleMarkerPress(i)}
-            pinColor={selectedPin === i ? '#FF0000' : '#C8A84B'}
-            title={selectedPin === i ? 'Tap map to move' : `Point ${i + 1}`}
-          />
+            anchor={{ x: 0.5, y: 0.5 }}
+            onPress={() => handleVertexTap(i)}
+          >
+            <View
+              style={[
+                styles.vertexDot,
+                selectedVertex === i && styles.vertexDotSelected,
+              ]}
+            />
+          </Marker>
+        ))}
+      {/* Edge midpoint handles */}
+      {(mode === 'add' || mode === 'edit') &&
+        edges.map((edge, i) => (
+          <Marker
+            key={`e-${i}`}
+            coordinate={edge.mid}
+            anchor={{ x: 0.5, y: 0.5 }}
+            onPress={() => handleEdgeTap(i)}
+          >
+            <View
+              style={[
+                styles.edgeDot,
+                selectedEdge === i && styles.edgeDotSelected,
+              ]}
+            />
+          </Marker>
         ))}
     </>
   );
@@ -221,7 +292,7 @@ export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
                   style={[styles.btn, { backgroundColor: Colors.STATUS_FULL }]}
                   onPress={onClose}
                 >
-                  <Text style={styles.btnText}>Close Editor</Text>
+                  <Text style={styles.btnText}>Close</Text>
                 </TouchableOpacity>
               </View>
             </>
@@ -230,27 +301,21 @@ export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
               <Text style={styles.toolbarTitle}>
                 {mode === 'add' ? 'New Lot' : `Editing: ${editingLot?.name}`}
               </Text>
-              <Text style={styles.hint}>
-                {selectedPin !== null
-                  ? 'Tap map to move selected point (red marker)'
-                  : 'Tap map to add points. Tap a marker to select it for moving.'}
-                {'\n'}{pins.length} point{pins.length !== 1 ? 's' : ''}
-              </Text>
+              <Text style={styles.hint}>{selectionHint}</Text>
               <View style={styles.toolbarBtns}>
-                <TouchableOpacity style={styles.btn} onPress={handleUndo}>
-                  <Text style={styles.btnText}>Undo</Text>
-                </TouchableOpacity>
-                {selectedPin !== null && (
-                  <TouchableOpacity
-                    style={[styles.btn, { backgroundColor: Colors.STATUS_FILLING }]}
-                    onPress={handleDeletePin}
-                  >
-                    <Text style={styles.btnText}>Remove Point</Text>
+                {selectedEdge !== null && (
+                  <TouchableOpacity style={styles.btn} onPress={handleAddVertex}>
+                    <Text style={styles.btnText}>Split Edge</Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity style={styles.btn} onPress={handleClear}>
-                  <Text style={styles.btnText}>Clear</Text>
-                </TouchableOpacity>
+                {selectedVertex !== null && pins.length > 3 && (
+                  <TouchableOpacity
+                    style={[styles.btn, { backgroundColor: Colors.STATUS_FILLING }]}
+                    onPress={handleRemoveVertex}
+                  >
+                    <Text style={styles.btnText}>Remove Vertex</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={[styles.btn, { backgroundColor: Colors.STATUS_AVAILABLE }]}
                   onPress={handleSave}
@@ -311,14 +376,9 @@ export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
                   onPress={handleSubmit}
                   disabled={saving}
                 >
-                  <Text style={styles.btnText}>
-                    {saving ? 'Saving...' : 'Save'}
-                  </Text>
+                  <Text style={styles.btnText}>{saving ? 'Saving...' : 'Save'}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.btn}
-                  onPress={() => setShowForm(false)}
-                >
+                <TouchableOpacity style={styles.btn} onPress={() => setShowForm(false)}>
                   <Text style={styles.btnText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
@@ -370,6 +430,34 @@ const styles = StyleSheet.create({
     color: Colors.TEXT_PRIMARY,
     fontSize: 13,
     fontWeight: '600',
+  },
+  vertexDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: Colors.ATU_GOLD,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  vertexDotSelected: {
+    backgroundColor: Colors.STATUS_FULL,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+  edgeDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: Colors.ATU_BLUE,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  edgeDotSelected: {
+    backgroundColor: '#00BFFF',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
   },
   modalOverlay: {
     flex: 1,

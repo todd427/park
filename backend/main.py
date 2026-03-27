@@ -6,8 +6,11 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pathlib import Path as FilePath
+
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
@@ -15,6 +18,7 @@ from backend.database import (
     CvEstimateDB,
     LotDB,
     OccupancySessionDB,
+    PhotoDB,
     PushTokenDB,
     ReportDB,
     create_tables,
@@ -185,9 +189,13 @@ def seed_lots(db: Session):
     db.commit()
 
 
+PHOTO_DIR = FilePath("/tmp/park_photos")
+
+
 @app.on_event("startup")
 def on_startup():
     create_tables()
+    PHOTO_DIR.mkdir(parents=True, exist_ok=True)
     db = next(get_db())
     try:
         seed_lots(db)
@@ -767,5 +775,73 @@ def occupancy_active(db: Session = Depends(get_db)):
         )
         results.append({"lot_id": lot_id, "active_count": count})
     return results
+
+
+# --- Photo Upload Endpoints ---
+
+
+@app.post("/api/photos", status_code=201)
+def upload_photo(
+    file: UploadFile = File(...),
+    user_id: str = Form(...),
+    lot_id: str = Form(None),
+    note: str = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Upload a photo via multipart form."""
+    db_photo = PhotoDB(
+        lot_id=lot_id,
+        user_id=user_id,
+        filename=file.filename,
+        note=note,
+    )
+    db.add(db_photo)
+    db.commit()
+    db.refresh(db_photo)
+
+    # Save file to disk
+    dest = PHOTO_DIR / f"{db_photo.id}_{file.filename}"
+    contents = file.file.read()
+    dest.write_bytes(contents)
+
+    return {
+        "id": db_photo.id,
+        "lot_id": db_photo.lot_id,
+        "user_id": db_photo.user_id,
+        "filename": db_photo.filename,
+        "note": db_photo.note,
+        "url": f"/api/photos/{db_photo.id}/file",
+        "created_at": db_photo.created_at.isoformat() if db_photo.created_at else None,
+    }
+
+
+@app.get("/api/photos")
+def list_photos(db: Session = Depends(get_db)):
+    """List all photos, most recent first."""
+    photos = db.query(PhotoDB).order_by(desc(PhotoDB.created_at)).all()
+    return [
+        {
+            "id": p.id,
+            "lot_id": p.lot_id,
+            "user_id": p.user_id,
+            "filename": p.filename,
+            "note": p.note,
+            "url": f"/api/photos/{p.id}/file",
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        }
+        for p in photos
+    ]
+
+
+@app.get("/api/photos/{photo_id}/file")
+def get_photo_file(photo_id: int, db: Session = Depends(get_db)):
+    """Serve the actual photo file."""
+    photo = db.query(PhotoDB).filter(PhotoDB.id == photo_id).first()
+    if photo is None:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    path = PHOTO_DIR / f"{photo.id}_{photo.filename}"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Photo file not found on disk")
+    return FileResponse(str(path))
 
 

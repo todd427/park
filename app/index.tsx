@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import MapView from 'react-native-maps';
+import MapView, { type Region } from 'react-native-maps';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Colors, StatusColors, StatusLabels, type ParkingStatus } from '../constants/theme';
 import { type Lot } from '../data/types';
@@ -9,6 +9,7 @@ import { LotOverlay } from '../components/LotOverlay';
 import { ReportModal } from '../components/ReportModal';
 import { SuccessToast } from '../components/SuccessToast';
 import { LotEditor } from '../components/LotEditor';
+import { SnapButton } from '../components/SnapButton';
 import { useGeofence } from '../hooks/useGeofence';
 import { useUserId } from '../hooks/useUserId';
 import { usePushNotifications } from '../hooks/usePushNotifications';
@@ -19,6 +20,7 @@ export default function MapScreen() {
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const [editorActive, setEditorActive] = useState(false);
+  const [mapCenter, setMapCenter] = useState(CAMPUS_CENTER);
   const userId = useUserId();
   usePushNotifications(userId);
 
@@ -63,6 +65,7 @@ export default function MapScreen() {
   const editor = LotEditor({
     active: editorActive,
     lots,
+    mapCenter: { latitude: mapCenter.latitude, longitude: mapCenter.longitude },
     onClose: () => setEditorActive(false),
     onSaved: loadLots,
   });
@@ -82,6 +85,7 @@ export default function MapScreen() {
         mapType="hybrid"
         initialRegion={CAMPUS_CENTER}
         onPress={editorActive && editor ? editor.handleMapPress : undefined}
+        onRegionChangeComplete={(region) => setMapCenter(region)}
       >
         {lots.map((lot) => (
           <LotOverlay
@@ -100,6 +104,8 @@ export default function MapScreen() {
       </MapView>
 
       {editor?.renderControls()}
+
+      {!editorActive && <SnapButton userId={userId} />}
 
       {!editorActive && (
         <>
