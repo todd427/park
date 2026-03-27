@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import MapView from 'react-native-maps';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Colors, StatusColors, StatusLabels, type ParkingStatus } from '../constants/theme';
@@ -19,20 +19,15 @@ export default function MapScreen() {
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const [editorActive, setEditorActive] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const userId = useUserId();
   usePushNotifications(userId);
-
-  // Triple-tap to toggle editor
-  const tapCountRef = useRef(0);
-  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadLots = useCallback(async () => {
     try {
       const data = await fetchLots();
       setLots(data);
-    } catch {
-      // Keep current state
-    }
+    } catch {}
   }, []);
 
   useEffect(() => {
@@ -66,22 +61,13 @@ export default function MapScreen() {
   const handleToastDismiss = useCallback(() => setToastVisible(false), []);
   const { backgroundEnabled } = useGeofence(handleLotPress);
 
-  const handleHeaderTap = useCallback(() => {
-    tapCountRef.current += 1;
-    if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
-    tapTimerRef.current = setTimeout(() => { tapCountRef.current = 0; }, 600);
-    if (tapCountRef.current >= 3) {
-      tapCountRef.current = 0;
-      setEditorActive((prev) => !prev);
-    }
-  }, []);
-
-  // Lot editor integration
   const editor = LotEditor({
     active: editorActive,
     lots,
     onClose: () => setEditorActive(false),
     onSaved: loadLots,
+    onDragStart: () => setDragging(true),
+    onDragEnd: () => setDragging(false),
   });
 
   return (
@@ -94,17 +80,14 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* Hidden triple-tap target */}
-      <View
-        style={styles.headerTap}
-        onTouchEnd={handleHeaderTap}
-      />
-
       <MapView
         style={styles.map}
         mapType="hybrid"
         initialRegion={CAMPUS_CENTER}
         onPress={editorActive && editor ? editor.handleMapPress : undefined}
+        scrollEnabled={!dragging}
+        rotateEnabled={!dragging}
+        pitchEnabled={!dragging}
       >
         {lots.map((lot) => (
           <LotOverlay
@@ -119,31 +102,35 @@ export default function MapScreen() {
             }}
           />
         ))}
-
-        {/* Editor overlays (new polygon being drawn) */}
         {editor?.renderMapOverlays()}
       </MapView>
 
-      {/* Editor controls */}
       {editor?.renderControls()}
 
       {!editorActive && (
-        <View style={styles.legend}>
-          {(['available', 'filling', 'full', 'unknown'] as ParkingStatus[]).map(
-            (s) => (
-              <View key={s} style={styles.legendItem}>
-                <View
-                  style={[styles.legendDot, { backgroundColor: StatusColors[s] }]}
-                />
-                <Text style={styles.legendText}>{StatusLabels[s]}</Text>
-              </View>
-            ),
-          )}
-        </View>
-      )}
-
-      {!editorActive && (
         <>
+          <View style={styles.legend}>
+            {(['available', 'filling', 'full', 'unknown'] as ParkingStatus[]).map(
+              (s) => (
+                <View key={s} style={styles.legendItem}>
+                  <View
+                    style={[styles.legendDot, { backgroundColor: StatusColors[s] }]}
+                  />
+                  <Text style={styles.legendText}>{StatusLabels[s]}</Text>
+                </View>
+              ),
+            )}
+          </View>
+
+          {/* Edit Lots button */}
+          <TouchableOpacity
+            style={styles.editBtn}
+            onPress={() => setEditorActive(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.editBtnText}>Edit Lots</Text>
+          </TouchableOpacity>
+
           <ReportModal
             lot={selectedLot}
             onReport={handleReport}
@@ -161,14 +148,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.BG_DARK,
   },
-  headerTap: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 60,
-    height: 44,
-    zIndex: 20,
-  },
   map: {
     flex: 1,
   },
@@ -176,7 +155,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 16,
     left: 16,
-    right: 16,
+    right: 80,
     flexDirection: 'row',
     justifyContent: 'space-around',
     backgroundColor: Colors.BG_CARD + 'E6',
@@ -198,6 +177,20 @@ const styles = StyleSheet.create({
     color: Colors.TEXT_PRIMARY,
     fontSize: 11,
     fontWeight: '600',
+  },
+  editBtn: {
+    position: 'absolute',
+    bottom: 16,
+    right: 16,
+    backgroundColor: Colors.ATU_BLUE,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  editBtnText: {
+    color: Colors.ATU_GOLD,
+    fontSize: 12,
+    fontWeight: '700',
   },
   geofenceBanner: {
     position: 'absolute',

@@ -19,6 +19,8 @@ interface LotEditorProps {
   lots: Lot[];
   onClose: () => void;
   onSaved: () => void;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
 }
 
 type EditorMode = 'idle' | 'add' | 'edit';
@@ -28,7 +30,7 @@ export function useLotEditor() {
   return { active, setActive };
 }
 
-export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
+export function LotEditor({ active, lots, onClose, onSaved, onDragStart, onDragEnd }: LotEditorProps) {
   const [mode, setMode] = useState<EditorMode>('idle');
   const [pins, setPins] = useState<LatLng[]>([]);
   const [editingLot, setEditingLot] = useState<Lot | null>(null);
@@ -164,12 +166,14 @@ export function LotEditor({ active, lots, onClose, onSaved }: LotEditorProps) {
             key={`editor-pin-${i}`}
             coordinate={pin}
             draggable
+            onDragStart={() => onDragStart?.()}
             onDragEnd={(e) => {
               setPins((prev) => {
                 const updated = [...prev];
                 updated[i] = e.nativeEvent.coordinate;
                 return updated;
               });
+              onDragEnd?.();
             }}
             pinColor="#C8A84B"
           />
