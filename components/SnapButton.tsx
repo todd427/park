@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { captureRef } from 'react-native-view-shot';
 import { Colors } from '../constants/theme';
 
 const API_BASE = __DEV__
@@ -9,37 +9,33 @@ const API_BASE = __DEV__
 
 interface SnapButtonProps {
   userId: string;
+  viewRef: React.RefObject<any>;
 }
 
-export function SnapButton({ userId }: SnapButtonProps) {
+export function SnapButton({ userId, viewRef }: SnapButtonProps) {
   const [uploading, setUploading] = useState(false);
 
   const handleSnap = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Camera permission needed', 'Allow camera access to take photos.');
+    if (!viewRef.current) {
+      Alert.alert('Nothing to capture');
       return;
     }
 
-    const result = await ImagePicker.launchCameraAsync({
-      quality: 0.7,
-      allowsEditing: false,
-    });
-
-    if (result.canceled || !result.assets?.length) return;
-
-    const asset = result.assets[0];
     setUploading(true);
-
     try {
+      const uri = await captureRef(viewRef, {
+        format: 'jpg',
+        quality: 0.8,
+      });
+
       const formData = new FormData();
       formData.append('file', {
-        uri: asset.uri,
+        uri,
         name: `snap_${Date.now()}.jpg`,
         type: 'image/jpeg',
       } as any);
       formData.append('user_id', userId);
-      formData.append('note', 'Snap from Park app');
+      formData.append('note', 'Screenshot from Park app');
 
       const res = await fetch(`${API_BASE}/api/photos`, {
         method: 'POST',
@@ -47,12 +43,12 @@ export function SnapButton({ userId }: SnapButtonProps) {
       });
 
       if (res.ok) {
-        Alert.alert('Sent!', 'Photo uploaded successfully.');
+        Alert.alert('Sent!', 'Screenshot uploaded.');
       } else {
-        Alert.alert('Upload failed', 'Could not send photo. Try again.');
+        Alert.alert('Upload failed', 'Try again.');
       }
-    } catch {
-      Alert.alert('Upload failed', 'Network error. Try again.');
+    } catch (e: any) {
+      Alert.alert('Snap failed', e.message || 'Could not capture screen.');
     } finally {
       setUploading(false);
     }

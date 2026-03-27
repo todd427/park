@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import MapView, { type MapType, type Region } from 'react-native-maps';
+import MapView, { type MapType } from 'react-native-maps';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Colors, StatusColors, StatusLabels, type ParkingStatus } from '../constants/theme';
 import { type Lot } from '../data/types';
@@ -9,11 +9,14 @@ import { LotOverlay } from '../components/LotOverlay';
 import { ReportModal } from '../components/ReportModal';
 import { SuccessToast } from '../components/SuccessToast';
 import { LotEditor } from '../components/LotEditor';
+import { GpsWalkEditor } from '../components/GpsWalkEditor';
 import { SnapButton } from '../components/SnapButton';
 import { useGeofence } from '../hooks/useGeofence';
 import { useUserId } from '../hooks/useUserId';
 import { usePushNotifications } from '../hooks/usePushNotifications';
-import { fetchLots, submitReport } from '../services/api';
+import { fetchLots, submitReport, deleteLot } from '../services/api';
+import { refreshLotCache } from '../services/locationTask';
+import { Alert } from 'react-native';
 
 const MAP_TYPES: { type: MapType; label: string }[] = [
   { type: 'hybrid', label: 'Satellite' },
@@ -21,13 +24,17 @@ const MAP_TYPES: { type: MapType; label: string }[] = [
   { type: 'terrain', label: 'Terrain' },
 ];
 
+type EditMode = 'none' | 'picker' | 'gps-add' | 'gps-edit' | 'map-edit';
+
 export default function MapScreen() {
   const [lots, setLots] = useState<Lot[]>([]);
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
-  const [editorActive, setEditorActive] = useState(false);
+  const [editMode, setEditMode] = useState<EditMode>('none');
+  const [editingLot, setEditingLot] = useState<Lot | null>(null);
   const [mapCenter, setMapCenter] = useState(CAMPUS_CENTER);
   const [mapTypeIndex, setMapTypeIndex] = useState(0);
+  const viewRef = useRef<View>(null);
   const userId = useUserId();
   usePushNotifications(userId);
 
@@ -46,11 +53,11 @@ export default function MapScreen() {
 
   const handleLotPress = useCallback(
     (lotId: string) => {
-      if (editorActive) return;
+      if (editMode !== 'none') return;
       const lot = lots.find((l) => l.id === lotId) ?? null;
       setSelectedLot(lot);
     },
-    [lots, editorActive],
+    [lots, editMode],
   );
 
   const handleReport = useCallback(
@@ -69,99 +76,202 @@ export default function MapScreen() {
   const handleToastDismiss = useCallback(() => setToastVisible(false), []);
   const { backgroundEnabled } = useGeofence(handleLotPress);
 
-  const editor = LotEditor({
-    active: editorActive,
-    lots,
-    mapCenter: { latitude: mapCenter.latitude, longitude: mapCenter.longitude },
-    onClose: () => setEditorActive(false),
-    onSaved: loadLots,
-  });
+  // GPS walk editor
+  const gpsEditor =
+    editMode === 'gps-add' || editMode === 'gps-edit'
+      ? GpsWalkEditor({
+          mode: editMode === 'gps-add' ? 'add' : 'edit',
+          editingLot: editingLot ?? undefined,
+          onDone: () => {
+            setEditMode('none');
+            setEditingLot(null);
+            loadLots();
+          },
+          onCancel: () => {
+            setEditMode('none');
+            setEditingLot(null);
+          },
+        })
+      : null;
 
-  const cycleMapType = () => {
-    setMapTypeIndex((prev) => (prev + 1) % MAP_TYPES.length);
+  // Map-based fallback editor
+  const mapEditor =
+    editMode === 'map-edit'
+      ? LotEditor({
+          active: true,
+          lots,
+          mapCenter: { latitude: mapCenter.latitude, longitude: mapCenter.longitude },
+          onClose: () => {
+            setEditMode('none');
+            setEditingLot(null);
+          },
+          onSaved: loadLots,
+        })
+      : null;
+
+  const handleDeleteLot = (lot: Lot) => {
+    Alert.alert('Delete lot?', `Remove "${lot.name}" permanently?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteLot(lot.id);
+            await refreshLotCache();
+            loadLots();
+          } catch (e: any) {
+            Alert.alert('Error', e.message);
+          }
+        },
+      },
+    ]);
   };
+
+  const isEditing = editMode !== 'none' && editMode !== 'picker';
 
   return (
     <GestureHandlerRootView style={styles.container}>
-      {backgroundEnabled && !editorActive && (
-        <View style={styles.geofenceBanner}>
-          <Text style={styles.geofenceText}>
-            Auto-detect is on — we'll prompt you when you're near a lot
-          </Text>
-        </View>
-      )}
-
-      <MapView
-        style={styles.map}
-        mapType={MAP_TYPES[mapTypeIndex].type}
-        initialRegion={CAMPUS_CENTER}
-        onPress={editorActive && editor ? editor.handleMapPress : undefined}
-        onRegionChangeComplete={(region) => setMapCenter(region)}
-      >
-        {lots.map((lot) => (
-          <LotOverlay
-            key={lot.id}
-            lot={lot}
-            onPress={() => {
-              if (editorActive && editor) {
-                editor.handleLotTap(lot);
-              } else {
-                handleLotPress(lot.id);
-              }
-            }}
-          />
-        ))}
-        {editor?.renderMapOverlays()}
-      </MapView>
-
-      {editor?.renderControls()}
-
-      {/* Right-side button stack — always visible when not editing */}
-      {!editorActive && (
-        <View style={styles.rightButtons}>
-          <SnapButton userId={userId} />
-          <TouchableOpacity
-            style={styles.mapTypeBtn}
-            onPress={cycleMapType}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.mapTypeBtnText}>
-              {MAP_TYPES[mapTypeIndex].label}
+      <View ref={viewRef} style={styles.container} collapsable={false}>
+        {backgroundEnabled && !isEditing && editMode !== 'picker' && (
+          <View style={styles.geofenceBanner}>
+            <Text style={styles.geofenceText}>
+              Auto-detect is on — we'll prompt you when you're near a lot
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.editBtn}
-            onPress={() => setEditorActive(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.editBtnText}>Edit Lots</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {!editorActive && (
-        <>
-          <View style={styles.legend}>
-            {(['available', 'filling', 'full', 'unknown'] as ParkingStatus[]).map(
-              (s) => (
-                <View key={s} style={styles.legendItem}>
-                  <View
-                    style={[styles.legendDot, { backgroundColor: StatusColors[s] }]}
-                  />
-                  <Text style={styles.legendText}>{StatusLabels[s]}</Text>
-                </View>
-              ),
-            )}
           </View>
+        )}
 
-          <ReportModal
-            lot={selectedLot}
-            onReport={handleReport}
-            onDismiss={handleDismiss}
-          />
-          <SuccessToast visible={toastVisible} onDismiss={handleToastDismiss} />
-        </>
-      )}
+        <MapView
+          style={styles.map}
+          mapType={MAP_TYPES[mapTypeIndex].type}
+          initialRegion={CAMPUS_CENTER}
+          onPress={mapEditor ? mapEditor.handleMapPress : undefined}
+          onRegionChangeComplete={(region) => setMapCenter(region)}
+        >
+          {lots.map((lot) => (
+            <LotOverlay
+              key={lot.id}
+              lot={lot}
+              onPress={() => {
+                if (editMode === 'picker') {
+                  // In picker mode, tapping a lot opens edit options
+                  setEditingLot(lot);
+                  Alert.alert(lot.name, 'What do you want to do?', [
+                    {
+                      text: 'Edit with GPS (walk)',
+                      onPress: () => setEditMode('gps-edit'),
+                    },
+                    {
+                      text: 'Edit on map',
+                      onPress: () => {
+                        setEditMode('map-edit');
+                      },
+                    },
+                    {
+                      text: 'Delete',
+                      style: 'destructive',
+                      onPress: () => {
+                        handleDeleteLot(lot);
+                        setEditMode('none');
+                      },
+                    },
+                    { text: 'Cancel', style: 'cancel' },
+                  ]);
+                } else if (mapEditor) {
+                  mapEditor.handleLotTap(lot);
+                } else {
+                  handleLotPress(lot.id);
+                }
+              }}
+            />
+          ))}
+          {gpsEditor?.renderMapOverlays()}
+          {mapEditor?.renderMapOverlays()}
+        </MapView>
+
+        {/* GPS editor controls */}
+        {gpsEditor?.renderControls()}
+
+        {/* Map editor controls */}
+        {mapEditor?.renderControls()}
+
+        {/* Mode picker */}
+        {editMode === 'picker' && (
+          <View style={styles.pickerPanel}>
+            <Text style={styles.pickerTitle}>Edit Lots</Text>
+            <Text style={styles.pickerHint}>
+              Tap a lot to edit it, or add a new one
+            </Text>
+            <View style={styles.pickerBtns}>
+              <TouchableOpacity
+                style={styles.pickerBtn}
+                onPress={() => setEditMode('gps-add')}
+              >
+                <Text style={styles.pickerBtnText}>+ Walk & Mark</Text>
+                <Text style={styles.pickerBtnSub}>Add lot using GPS</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.pickerBtn}
+                onPress={() => setEditMode('map-edit')}
+              >
+                <Text style={styles.pickerBtnText}>Edit on Map</Text>
+                <Text style={styles.pickerBtnSub}>Remote editing</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={styles.pickerClose}
+              onPress={() => setEditMode('none')}
+            >
+              <Text style={styles.pickerCloseText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Normal mode buttons */}
+        {editMode === 'none' && (
+          <>
+            <View style={styles.rightButtons}>
+              <SnapButton userId={userId} viewRef={viewRef} />
+              <TouchableOpacity
+                style={styles.mapTypeBtn}
+                onPress={() => setMapTypeIndex((i) => (i + 1) % MAP_TYPES.length)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.mapTypeBtnText}>
+                  {MAP_TYPES[mapTypeIndex].label}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.editBtn}
+                onPress={() => setEditMode('picker')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.editBtnText}>Edit Lots</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.legend}>
+              {(['available', 'filling', 'full', 'unknown'] as ParkingStatus[]).map(
+                (s) => (
+                  <View key={s} style={styles.legendItem}>
+                    <View
+                      style={[styles.legendDot, { backgroundColor: StatusColors[s] }]}
+                    />
+                    <Text style={styles.legendText}>{StatusLabels[s]}</Text>
+                  </View>
+                ),
+              )}
+            </View>
+
+            <ReportModal
+              lot={selectedLot}
+              onReport={handleReport}
+              onDismiss={handleDismiss}
+            />
+            <SuccessToast visible={toastVisible} onDismiss={handleToastDismiss} />
+          </>
+        )}
+      </View>
     </GestureHandlerRootView>
   );
 }
@@ -247,5 +357,59 @@ const styles = StyleSheet.create({
     color: Colors.ATU_GOLD,
     fontSize: 12,
     fontWeight: '600',
+  },
+  pickerPanel: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: Colors.BG_MODAL + 'F8',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 36,
+    zIndex: 15,
+  },
+  pickerTitle: {
+    color: Colors.ATU_GOLD,
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  pickerHint: {
+    color: Colors.TEXT_SECONDARY,
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  pickerBtns: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  pickerBtn: {
+    flex: 1,
+    backgroundColor: Colors.ATU_BLUE,
+    borderRadius: 14,
+    padding: 16,
+    alignItems: 'center',
+  },
+  pickerBtnText: {
+    color: Colors.ATU_GOLD,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  pickerBtnSub: {
+    color: Colors.TEXT_SECONDARY,
+    fontSize: 11,
+    marginTop: 4,
+  },
+  pickerClose: {
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  pickerCloseText: {
+    color: Colors.TEXT_SECONDARY,
+    fontSize: 14,
   },
 });
