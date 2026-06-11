@@ -83,12 +83,16 @@ park/
 
 ## Campus Parking Lots
 
-| ID | Name | Capacity |
-|---|---|---|
-| `A` | Main Car Park | 120 |
-| `B` | Sports Centre | 60 |
-| `C` | West Block | 45 |
-| `D` | Staff / Overflow | 80 |
+> ⚠️ **Capacities below are UNVALIDATED placeholders and almost certainly wrong
+> (3–4× too low per polygon-area audit). Do not build logic that trusts them.
+> See `docs/CAPACITY-AUDIT.md` (2026-06-11) for evidence and fix plan.**
+
+| ID | Name | Capacity (placeholder) | Area-derived estimate |
+|---|---|---|---|
+| `A` | Main Car Park | 120 | ~400–480 |
+| `B` | Sports Centre | 60 | ~180–215 |
+| `C` | West Block | 45 | ~240–290 |
+| `D` | Staff / Overflow | 80 | ~125–150 |
 
 Polygons and centroids in `data/lots.ts`.
 
@@ -109,6 +113,8 @@ Polygons and centroids in `data/lots.ts`.
 - Sessions auto-expire after 4 hours (stale device protection)
 - `passive_pct = (active_sessions / capacity) * 100`
 - `passive_weight = min(active_sessions, 10) / 10.0`
+- ⚠️ `passive_pct` is capacity-sensitive — wrong capacity skews status directly.
+  See `docs/CAPACITY-AUDIT.md`.
 
 **Blending (all sources):**
 - `cv_weight = confidence * 2.0`
@@ -177,6 +183,7 @@ Polygons and centroids in `data/lots.ts`.
 | **Phase 2** | ✅ Complete | Background geofence, auto-prompt, pub/sub bridge |
 | **Phase 3** | ✅ Complete | CV occupancy layer, confidence-weighted blending |
 | **Phase 4** | ✅ Complete | EAS Build + push alerts — "Lot A just freed up" |
+| **Capacity audit** | 🔶 Open | Validate lot capacities — see `docs/CAPACITY-AUDIT.md` |
 
 ---
 
@@ -293,5 +300,5 @@ Phase 5 spec to be written when Phase 4 is complete.
 
 ---
 
-*PRD version: 1.4 — 2026-03-22 (Phase 3 complete, Phase 4 EAS build added)*
+*PRD version: 1.5 — 2026-06-11 (capacity audit added, capacities flagged unvalidated)*
 *todd427/park*
